@@ -2,3 +2,5 @@
 /zig-out
 # Fetched package sources (`zig build` re-fetches from build.zig.zon).
 /zig-pkg
+__pycache__/
+*.pyc
