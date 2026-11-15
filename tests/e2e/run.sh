@@ -262,6 +262,19 @@ if ! skip_group commit; then
     git -C "$d3" tag v0.8.0
     out=$(run_code --repo "$d3" --write --create-tag)
     expect_contains "a tag on HEAD leaves nothing to release" "$out" "exit=3" "$out"
+
+    # Regression: CI runners export GIT_AUTHOR_* and `git` prefers them over
+    # user.name, so a release could be attributed to whichever GitHub account
+    # an inherited address happens to belong to. Seen in production: four
+    # releases were credited to a stranger named after this very tool.
+    d6=$(seed_zap)
+    GIT_AUTHOR_NAME="chgl" GIT_AUTHOR_EMAIL="dev@chgl.invalid" \
+        GIT_COMMITTER_NAME="chgl" GIT_COMMITTER_EMAIL="dev@chgl.invalid" \
+        "$bin" --repo "$d6" --write --commit >/dev/null 2>&1
+    who=$(git -C "$d6" log -1 --format='%an <%ae>')
+    expect_eq "an inherited GIT_AUTHOR is ignored" "Test Author <t@example.com>" "$who"
+    who=$(git -C "$d6" log -1 --format='%cn <%ce>')
+    expect_eq "an inherited GIT_COMMITTER is ignored" "Test Author <t@example.com>" "$who"
 fi
 
 # ----------------------------------------------------------- bump version

@@ -53,7 +53,12 @@ jobs:
         run: |
           set -euo pipefail
           git config user.name "chgl release bot"
-          git config user.email "chgl@users.noreply.github.com"
+          # The bot is not a GitHub account, so its commits are deliberately
+          # unattributed. The address must therefore be one no account can own:
+          # a bare-login `@users.noreply.github.com` address is credited to
+          # whoever holds that login, and an account called `chgl` exists.
+          # `.invalid` is reserved by RFC 2606 and can never become a mailbox.
+          git config user.email "chgl-release-bot@chgl.invalid"
           # `git push --dry-run` reports a permission problem without moving
           # anything. Doing this first means a read-only token fails here, with
           # an actionable message, instead of after a commit and a tag exist.

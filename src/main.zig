@@ -410,7 +410,17 @@ fn generateWith(gpa: std.mem.Allocator, init: std.process.Init, opts_in: cli.Opt
             var vbuf: [64]u8 = undefined;
             break :blk try std.fmt.bufPrint(&msg_buf, "chore(release): {s}{s}", .{ plan.version_style.prefix, try v.render(&vbuf) });
         } else "chore: update changelog";
-        worktree.commit(runner, msg, if (opts.commit_only) paths else null) catch {
+        // Commit as whoever the repository says we are, never as whoever the
+        // environment claims: an inherited GIT_AUTHOR_EMAIL would attribute a
+        // release to a stranger's GitHub account.
+        var scrub_env = worktree.scrubbedEnviron(gpa, init.environ_map) catch {
+            try err.writeAll("chgl: out of memory\n");
+            return 1;
+        };
+        defer scrub_env.deinit();
+        var commit_runner = runner;
+        commit_runner.environ = &scrub_env;
+        worktree.commit(commit_runner, msg, if (opts.commit_only) paths else null) catch {
             try err.writeAll("chgl: commit failed\n");
             return 1;
         };

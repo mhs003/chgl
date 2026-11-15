@@ -37,6 +37,10 @@ pub const Runner = struct {
     verbose: bool = false,
     /// Repository to run in. Empty means the current directory.
     cwd: []const u8 = "",
+    /// Environment for commands that write. Null inherits the parent's, which
+    /// is right for read-only git: the user's own config and credentials still
+    /// apply. Commits pass a scrubbed copy — see `worktree.identityIsExplicit`.
+    environ: ?*const std.process.Environ.Map = null,
 
     pub fn init(io: std.Io, allocator: std.mem.Allocator) Runner {
         return .{ .io = io, .allocator = allocator };
