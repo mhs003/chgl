@@ -45,6 +45,7 @@ pub const specs = [_]Spec{
     .{ .long = "no-tui", .help = "Never open the interactive editor" },
     .{ .long = "dump-frame", .help = "Print one editor frame as plain text and exit (for scripts and tests)" },
     .{ .long = "frame", .value = .string, .help = "With --dump-frame: list, preview, help, or confirm" },
+    .{ .long = "explain", .help = "With --dry-run: explain each decision on stderr" },
     .{ .long = "quiet", .short = 'q', .help = "Suppress warnings" },
     .{ .long = "verbose", .short = 'v', .help = "Print diagnostics to stderr" },
     .{ .long = "version", .short = 'V', .help = "Print the version and the config file in use" },
@@ -91,6 +92,7 @@ pub const Options = struct {
     no_tui: bool = false,
     dump_frame: bool = false,
     frame: ?[]const u8 = null,
+    explain: bool = false,
     quiet: bool = false,
     verbose: bool = false,
     show_version: bool = false,
@@ -200,6 +202,7 @@ fn apply(opts: *Options, spec: Spec, value: ?[]const u8) ParseError!void {
     if (std.mem.eql(u8, l, "no-tui")) opts.no_tui = true;
     if (std.mem.eql(u8, l, "dump-frame")) opts.dump_frame = true;
     if (std.mem.eql(u8, l, "frame")) opts.frame = value;
+    if (std.mem.eql(u8, l, "explain")) opts.explain = true;
     if (std.mem.eql(u8, l, "quiet")) opts.quiet = true;
     if (std.mem.eql(u8, l, "verbose")) opts.verbose = true;
     if (std.mem.eql(u8, l, "version")) opts.show_version = true;

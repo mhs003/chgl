@@ -251,6 +251,17 @@ fn generateWith(gpa: std.mem.Allocator, init: std.process.Init, opts_in: cli.Opt
         for (plan.notices.items) |n| try err.print("chgl: {s}\n", .{n});
     }
 
+    if (opts.explain) {
+        // "Why is that commit missing?" is the first question after a wrong
+        // guess, so the reasons are printable without opening the editor.
+        for (plan.release.entries.items) |e| {
+            const shown = if (e.from_file) "file" else "commits";
+            try err.print("chgl: {s:<4} [{s}] {s}\n", .{ e.state.label(), shown, e.subject });
+            if (e.reason != .none) try err.print("chgl:      {s}\n", .{e.reason.label()});
+        }
+        try err.print("chgl: range {s}: {d} commits, {d} kept\n", .{ plan.range.description, plan.total_commits, plan.release.count(.keep) });
+    }
+
     if (opts.command == .log) {
         // `log` prints tag-to-tag sections for the current range, and never
         // writes: it is the no-decisions view used to check a mapping.

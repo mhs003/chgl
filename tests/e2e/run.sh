@@ -155,6 +155,10 @@ if ! skip_group range; then
     out=$(run --repo "$d" --dry-run --exclude "fix(wait):*")
     expect_not_contains "exclude glob drops the fix entry" "$out" "still drifting" "$out"
 
+    out=$(run --repo "$d" --dry-run --explain)
+    expect_contains "--explain names each kept entry" "$out" "Keep [commits] feat(cli): add --dry-run" "$out"
+    expect_contains "--explain gives a skip its reason" "$out" "release commit" "$out"
+
     out=$(run --repo "$d" --dry-run --date 2020-01-02)
     expect_contains "--date flows into the heading" "$out" "## [0.8.0] - 2020-01-02" "$out"
 
