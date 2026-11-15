@@ -27,6 +27,12 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    # The bot's own push must not start another release, or a single fix can
+    # cascade into several tags. `chgl` already skips `chore(release)` commits
+    # when listing changes; this stops the trigger as well.
+    if: >-
+      !startsWith(github.event.head_commit.message, 'chore(release)') &&
+      !startsWith(github.event.head_commit.message, 'chore(changelog)')
     outputs:
       released: ${{ steps.cut.outputs.released }}
       version: ${{ steps.cut.outputs.version }}
