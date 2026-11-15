@@ -26,6 +26,7 @@ Needs `git`. No runtime dependencies; not even a network connection.
 ## Use
 
 ```sh
+chgl init            # create the changelog, or start an empty one
 chgl                 # review it in the editor, then apply
 chgl --dry-run       # print the section, change nothing
 chgl -i              # force the editor

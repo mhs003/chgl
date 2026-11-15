@@ -145,8 +145,12 @@ fn cmdInit(gpa: std.mem.Allocator, init: std.process.Init, opts: cli.Options, er
     if (chosen) |c| {
         // A bare title has no format yet; `init` starts it as Keep a Changelog
         // and keeps the title, so it is not a competing format.
+        // Only a real competing format is refused here; plain text with no
+        // headings is reported as "no version headings" below, which is what
+        // it actually is.
         const title_only = if (existing) |t| init_skeleton.titleOnly(t) != null else false;
-        if (!c.format.writable() and has_content and !title_only) {
+        const marked = c.format != .unknown;
+        if (!c.format.writable() and has_content and !title_only and marked) {
             try err.print("chgl: {s} is not Markdown; chgl only writes Markdown (pass --file to choose a target)\n", .{c.path});
             return 1;
         }

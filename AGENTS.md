@@ -23,7 +23,11 @@ rules that keep each of them good are different; do not copy `cmg`'s
 2. **stdout is a contract.** In headless mode stdout carries only the rendered
    section (or nothing). Diagnostics, warnings and progress go to stderr. The
    TUI draws on the controlling terminal, never on stdout, so a piped run can
-   never receive escape codes.
+   never receive escape codes. A run that wrote something ends with **one**
+   summary line on stderr (`wrote <file>, <version>, committed, tagged`, only
+   the parts that happened); `--quiet` removes it and every notice, but never
+   `git`'s own output. No message may say "see above" for something that was
+   not printed: on error the plan's notices are discarded.
 3. **Exit codes matter.** `0` success, `1` error, `2` usage, `3` nothing to
    release, `4` would overwrite an existing release section (needs `--force`).
    `3` is deliberately the same meaning `cmg`'s release script uses, so a
@@ -32,6 +36,9 @@ rules that keep each of them good are different; do not copy `cmg`'s
    line-preserving: bytes outside the inserted region round-trip exactly. If
    the file cannot be parsed into a known shape, refuse and say why. Appending
    a section to an unrecognised file is how changelogs get corrupted.
+   `chgl init` follows the same rule: it starts only a missing, empty, or
+   title-only file, and refuses one with prose or in another format, leaving it
+   byte-identical. It never reshapes somebody's text.
 5. **Nothing is written without the user asking.** No `--write` means no writes;
    `--commit` and `--tag` are separate, explicit actions. The tool never pushes.
 6. **Shell out to `git`.** No libgit2. The log format is one NUL-safe
@@ -67,6 +74,14 @@ reference.
 - The range is `last release tag..HEAD`: the newest tag that is semver-like
   **and** reachable from `HEAD`. Not `git describe`'s nearest tag (that picks
   `nightly` and `latest`), and never silently "all of history".
+- **The file can run ahead of the tags.** CI often tags on push, so a release
+  section written by `chgl --commit` has no tag for a while. When the newest
+  version *in the file* is newer than every tag, that version is the boundary,
+  and the bound is the `chore(release):` commit that wrote it — not `HEAD`.
+  Work committed after that release is still unreleased and must be listed.
+  Do not bound at `HEAD`: it silently swallows newer commits.
+  Only `chore(release)` counts, never `chore(version)`: a later version bump
+  also ends with the version and would hide the commits in between.
 - No qualifying tag, or a shallow clone (`git rev-parse
   --is-shallow-repository`), is a loud notice: the range becomes the whole
   history capped by `changelog.max_commits`.
@@ -127,11 +142,19 @@ back on every exit path:
 ```sh
 zig build test                 # unit tests, fast, no network, no git needed
 sh tests/e2e/run.sh            # end-to-end against temp repos (needs git)
+sh tests/run-all.sh            # all of the above, plus cross-compilation
 ```
+
+`tests/run-all.sh` also cross-compiles every release target. That is not
+decoration: a Windows-only `ioctl` and a test that faked a file handle with
+`-1` both reached `master` because nothing on this host compiled the Windows
+code path.
 
 Add a test for every behaviour change; bug fixes get a regression test.
 Round-trip tests over `tests/fixtures/` are the safety net for the editor —
 a fixture is only "handled" if parsing and re-rendering it is byte-identical.
+A bug that renders correctly but behaves wrongly (an apply screen that cancels)
+has to be tested at the outcome level; a frame test cannot see it.
 
 ## Releases
 
@@ -139,3 +162,13 @@ a fixture is only "handled" if parsing and re-rendering it is byte-identical.
 from Conventional Commits by `chgl` itself (`chgl --as "$NEXT" --write
 --commit --create-tag`) — the tool maintains its own changelog from its first
 release, which is also the end-to-end proof that it works.
+
+The release workflow must not skip on the commit *message*: a hand-made
+`chgl --create-tag` push also ends in a `chore(release)` commit, and skipping
+it shipped `v0.7.0` with no binaries. It decides from the tag instead — an
+untagged head cuts a release, a tagged head with a release does nothing, a
+tagged head without one builds and publishes it.
+
+CI that tags on push (rather than `chgl`) is normal: commit the release with
+`chgl --write --commit`, and let CI tag `v$(cat VERSION)`. `chgl` must never
+assume it is the only thing that creates tags.

@@ -150,6 +150,24 @@ Supported: `*`, `?`, `[a-z]`, `[!a-z]`, and `{feat,fix}`.
 | `-V`, `--version` | Print the version. |
 | `-h`, `--help` | Print help. |
 
+### What a run prints
+
+`stdout` carries the section and nothing else, so `chgl --dry-run > notes.md` is
+always safe. Everything `chgl` says about itself goes to stderr, and a run that
+wrote something ends with exactly one line:
+
+```
+chgl: wrote CHANGELOG.md, VERSION 1.2.0, committed, tagged
+```
+
+Only the parts that happened are named. `--quiet` removes that line and every
+notice, but never `git`'s own output — the commit it made is not `chgl`'s to
+hide.
+
+Notices are for things worth knowing: a shallow clone, a capped history,
+commits that are not Conventional Commits, a tag that is missing. They name the
+file or flag involved, and never point at output that was not printed.
+
 ## How the changelog is found
 
 Candidates are scored, and the highest wins:
@@ -182,6 +200,35 @@ newest qualifying tag wins, so a stray older tag cannot shorten the range.
 With no qualifying tag — a fresh repository, or a shallow clone in CI — the
 range becomes the whole history, capped by `changelog.max_commits` (200), and
 `chgl` says so.
+
+### When the file runs ahead of the tags
+
+A changelog can document a release that has no tag yet: CI may tag on push, or
+someone may write a section by hand. Treating the newest tag as the boundary in
+that window would rewrite the same entries under a new heading, so the newest
+version **in the file** wins when it is newer than every tag.
+
+The boundary is then the commit that wrote that section — a `chore(release):`
+commit — not the end of history. Commits made after it are still unreleased and
+are listed normally.
+
+```
+$ chgl --dry-run
+## [1.21.0] - 2026-11-15
+
+### Changed
+
+- **website:** overhaul the offer menu builder
+chgl: boundary: 1.20.0 from the changelog (newer than v1.19.3)
+```
+
+When nothing has been committed since that release, the run exits `3`:
+
+```
+chgl: nothing to release in 1.20.0..HEAD (from the file) (0 commits, none releasable)
+```
+
+Tag the release and the tag takes over as the boundary again.
 
 Commits are classified by their Conventional Commits type:
 
