@@ -33,16 +33,41 @@ chgl [COMMAND] [OPTIONS]
 Without a command, `chgl` builds the next release section and either opens the
 editor (`--tui`, or by default when both stdin and stdout are terminals) or
 prints the section to stdout.
-
-## Commands
-
 ### `chgl init`
+
+Creates the changelog, or starts one that exists but is empty.
+
+| Flag | Meaning |
+| --- | --- |
+| `--file <path>` | Write to this path instead of the detected one. |
+| `-q`, `--quiet` | Print nothing on success. |
+
+What it will and will not touch:
+
+| The file | What happens |
+| --- | --- |
+| missing | Writes a skeleton ending in `## [Unreleased]`. |
+| empty | Same. |
+| only a `# Title` | Keeps the title, adds `## [Unreleased]` below it. |
+| already has `## [Unreleased]` | Says it is ready; changes nothing. |
+| already has releases | Says so; changes nothing. |
+| has content but no version headings | **Refuses.** Your text is not ours to reshape. |
+| is not Markdown (e.g. `.rst`) | **Refuses**, rather than shadowing it with a `.md` file. |
+
+A refusal exits `1` and leaves the file byte-identical. Add a `## [Unreleased]`
+heading where releases belong, and the next run will fill it.
+
+### `chgl config init`
 
 Writes an example `config.toml` to the platform config directory.
 
 | Flag | Meaning |
 | --- | --- |
 | `-f`, `--force` | Overwrite an existing file. |
+| `--config <path>` | Write to this path instead. |
+
+> `init` used to mean this. It now creates the changelog, so the config went
+> to `config init`.
 
 ### `chgl detect`
 

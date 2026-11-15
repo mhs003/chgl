@@ -54,7 +54,10 @@ pub const specs = [_]Spec{
 
 pub const Command = enum {
     generate,
+    /// Create the changelog, or start one when the file is empty.
     init,
+    /// Write the config file. Two words so `init` can mean the project's file.
+    config_init,
     detect,
     log,
 };
@@ -141,9 +144,18 @@ pub fn parse(allocator: std.mem.Allocator, args: []const [:0]const u8) ParseErro
             try apply(&opts, spec, null);
             continue;
         }
-        // A positional is the subcommand, and it must come first.
+        // A positional is the subcommand, and it must come first. `config init`
+        // is the one two-word command: `init` alone creates the changelog.
         if (seen_positional) return error.UnexpectedArgument;
-        opts.command = commandFromName(raw) orelse return error.UnknownCommand;
+        if (std.mem.eql(u8, raw, "config")) {
+            if (i + 1 >= args.len) return error.UnknownCommand;
+            const sub = args[i + 1];
+            if (!std.mem.eql(u8, sub, "init")) return error.UnknownCommand;
+            i += 1;
+            opts.command = .config_init;
+        } else {
+            opts.command = commandFromName(raw) orelse return error.UnknownCommand;
+        }
         seen_positional = true;
     }
 
@@ -216,10 +228,11 @@ pub const USAGE =
     \\last release tag, and review or write it.
     \\
     \\Commands:
-    \\  (none)    Generate the next release section (the normal run)
-    \\  init      Write an example config to the config directory
-    \\  detect    Report which file is the changelog and why
-    \\  log       Print tag-to-tag release sections, without a model
+    \\  (none)       Generate the next release section (the normal run)
+    \\  init         Create the changelog, or start one when it is empty
+    \\  config init  Write an example config to the config directory
+    \\  detect       Report which file is the changelog and why
+    \\  log          Print tag-to-tag release sections, without a model
     \\
     \\Options:
     \\

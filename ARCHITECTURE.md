@@ -18,11 +18,12 @@ without changing the result.
 
 | File | Responsibility |
 | --- | --- |
-| `src/main.zig` | Entry point. Parses args, dispatches subcommands (`init`, `detect`, `log`), runs the pipeline for the default command, applies the plan. |
+| `src/main.zig` | Entry point. Parses args, dispatches subcommands (`init`, `config init`, `detect`, `log`), runs the pipeline for the default command, applies the plan. |
 | `src/cli.zig` | A flag spec table, a parser for it, and `--help` rendered from the same table, so help and parsing cannot drift. No dependency on an argument library. |
 | `src/config.zig` | Config discovery (`--config`, `$CHGL_CONFIG`, `%APPDATA%\chgl` / `$XDG_CONFIG_HOME` / `~/.config/chgl`), TOML and JSON into one struct, defaults, validation, `init`. |
 | `src/git/` | `git` CLI wrappers: one NUL-safe log format, semver-filtered tag selection, `rev-parse`, `status --porcelain`, `remote get-url`, `add -- <path>`, `commit -F -`, `tag`. |
 | `src/detect.zig` | Which file is the changelog, why, and whether it can be written. Pure given a directory + a name list, so it is testable. |
+| `src/init_skeleton.zig` | The file `chgl init` writes, and the checks that decide whether a file may be started or must be left alone. |
 | `src/changelog.zig` | Parses a Markdown changelog into blocks, finds the insertion point, inserts a section, absorbs `[Unreleased]`, rewrites link-ref footers. Line-preserving. |
 | `src/release.zig` | Commit range → `Entry`s with a `State` (`keep`/`skip`/`ask`); classification into groups; breaking detection; builds the `Plan`. |
 | `src/version.zig` | Semver parse/compare/bump, tag-prefix inference, version-source readers and the opt-in writer. |

@@ -31,6 +31,11 @@ pub const Fs = struct {
     /// Write atomically: a sibling temp file, then rename over the target, so a
     /// failure never leaves a half-written changelog.
     pub fn writeAtomic(self: Fs, allocator: std.mem.Allocator, path: []const u8, bytes: []const u8) !void {
+        // `--file docs/HISTORY.md` names a directory that may not exist yet.
+        if (std.mem.lastIndexOfScalar(u8, path, '/')) |slash| {
+            if (slash != 0) self.dir.createDirPath(self.io, path[0..slash]) catch {};
+        }
+
         const tmp = try std.fmt.allocPrint(allocator, "{s}.chgl-tmp", .{path});
         defer allocator.free(tmp);
 

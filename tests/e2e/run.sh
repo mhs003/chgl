@@ -405,18 +405,78 @@ if ! skip_group config; then
     # init writes a usable config, and refuses to clobber one.
     conf2="$tmp/conf2"
     mkdir -p "$conf2"
-    # `init` writes to the platform config directory, which is %APPDATA% on
-    # Windows and XDG elsewhere, so the path is taken from what it reports
-    # rather than assumed.
-    init_out=$(XDG_CONFIG_HOME="$conf2" "$bin" init 2>&1)
+    # `config init` writes to the platform config directory, which is %APPDATA%
+    # on Windows and XDG elsewhere; --config names it outright.
+    init_out=$(XDG_CONFIG_HOME="$conf2" "$bin" config init 2>&1)
     written=$(printf '%s' "$init_out" | sed -n 's/.*wrote //p')
-    [ -n "$written" ] && [ -f "$written" ] && pass "init writes config.toml" || fail "init writes config.toml" "$init_out"
-    code=$(XDG_CONFIG_HOME="$conf2" code_of init)
-    expect_eq "init refuses to overwrite" "1" "$code"
-    code=$(XDG_CONFIG_HOME="$conf2" code_of init --force)
-    expect_eq "init --force overwrites" "0" "$code"
+    [ -n "$written" ] && [ -f "$written" ] && pass "config init writes config.toml" || fail "config init writes config.toml" "$init_out"
+    code=$(XDG_CONFIG_HOME="$conf2" code_of config init)
+    expect_eq "config init refuses to overwrite" "1" "$code"
+    code=$(XDG_CONFIG_HOME="$conf2" code_of config init --force)
+    expect_eq "config init --force overwrites" "0" "$code"
     out=$("$bin" -V --config "$written" 2>&1)
     expect_contains "-V names the config in use" "$out" "$written" "$out"
+
+    # `config init --config` writes exactly where it is told.
+    explicit="$conf2/explicit/nested/config.toml"
+    "$bin" config init --config "$explicit" >/dev/null 2>&1
+    [ -f "$explicit" ] && pass "config init --config writes that path" || fail "config init --config writes that path" "missing $explicit"
+fi
+
+# ---------------------------------------------------------------- init (file)
+if ! skip_group init; then
+    t "creating the changelog"
+    d=$(new_repo init_missing)
+    out=$(run_code --repo "$d" init)
+    expect_contains "a missing changelog is created" "$out" "exit=0" "$out"
+    [ -f "$d/CHANGELOG.md" ] && pass "CHANGELOG.md exists" || fail "CHANGELOG.md exists" "missing"
+    grep -q '## \[Unreleased\]' "$d/CHANGELOG.md" && pass "it has an Unreleased heading" || fail "it has an Unreleased heading" "$(cat "$d/CHANGELOG.md")"
+
+    out=$(run_code --repo "$d" init)
+    expect_contains "running init again is a no-op" "$out" "exit=0" "$out"
+    expect_contains "and says the file is ready" "$out" "is ready" "$out"
+
+    # An empty file is started, not rejected as "not Markdown".
+    d2=$(new_repo init_empty)
+    : > "$d2/CHANGELOG.md"
+    out=$(run_code --repo "$d2" init)
+    expect_contains "an empty changelog is started" "$out" "exit=0" "$out"
+    grep -q '## \[Unreleased\]' "$d2/CHANGELOG.md" && pass "the skeleton landed" || fail "the skeleton landed" "$(cat "$d2/CHANGELOG.md")"
+
+    # A bare title is kept; the skeleton is appended under it.
+    d3=$(new_repo init_title)
+    printf '# My Project\n' > "$d3/CHANGELOG.md"
+    out=$(run_code --repo "$d3" init)
+    expect_contains "a title-only changelog is started" "$out" "exit=0" "$out"
+    head -1 "$d3/CHANGELOG.md" | grep -q '# My Project' && pass "the user's title is kept" || fail "the user's title is kept" "$(head -1 "$d3/CHANGELOG.md")"
+    grep -q '## \[Unreleased\]' "$d3/CHANGELOG.md" && pass "and Unreleased was added" || fail "and Unreleased was added" "$(cat "$d3/CHANGELOG.md")"
+
+    # Real content is never overwritten, or changelogs get corrupted.
+    d4=$(new_repo init_content)
+    printf '# Changelog\n\nWe ship often. Notes are kept by hand below.\n\n- did a thing\n' > "$d4/CHANGELOG.md"
+    cp "$d4/CHANGELOG.md" "$tmp/before.md"
+    out=$(run_code --repo "$d4" init)
+    expect_contains "a file with prose is refused" "$out" "exit=1" "$out"
+    cmp -s "$d4/CHANGELOG.md" "$tmp/before.md" && pass "and is left byte-identical" || fail "and is left byte-identical" "file changed"
+
+    # A changelog in another format is a deliberate choice.
+    d5=$(new_repo init_rst)
+    printf 'Release 1.0\n===========\n' > "$d5/CHANGELOG.rst"
+    out=$(run_code --repo "$d5" init)
+    expect_contains "an rst changelog is refused" "$out" "exit=1" "$out"
+    [ -f "$d5/CHANGELOG.md" ] && fail "no Markdown file is shadowing it" "CHANGELOG.md appeared" || pass "no Markdown file is shadowing it"
+
+    # --file names the target, including a directory that does not exist yet.
+    d6=$(new_repo init_file)
+    out=$(run_code --repo "$d6" init --file docs/HISTORY.md)
+    expect_contains "init --file creates the named path" "$out" "exit=0" "$out"
+    [ -f "$d6/docs/HISTORY.md" ] && pass "the parent directory was created" || fail "the parent directory was created" "missing"
+
+    # A release already in the file means there is nothing to create.
+    d7=$(new_repo init_released)
+    printf '# Changelog\n\n## [1.2.3] - 2026-01-01\n\n- x\n' > "$d7/CHANGELOG.md"
+    out=$(run_code --repo "$d7" init)
+    expect_contains "a changelog with releases is left alone" "$out" "exit=0" "$out"
 fi
 
 # --------------------------------------------------------------- exit codes

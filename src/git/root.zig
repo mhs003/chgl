@@ -70,9 +70,9 @@ pub const Runner = struct {
         if (self.verbose) {
             var buf: [1024]u8 = undefined;
             var fbs = std.Io.Writer.fixed(&buf);
-            fbs.print("git", .{}) catch {};
-            for (full) |a| fbs.print(" {s}", .{a}) catch {};
-            std.debug.print("chgl: run: {s}\n", .{fbs.buffered()});
+            // `argv[0]` is already "git"; printing both produced "git git".
+            for (full) |a| fbs.print("{s} ", .{a}) catch {};
+            std.debug.print("chgl: run: {s}\n", .{std.mem.trimEnd(u8, fbs.buffered(), " ")});
         }
 
         var child = std.process.spawn(self.io, .{

@@ -14,6 +14,7 @@ test {
     _ = @import("changelog/parse.zig");
     _ = @import("changelog/edit.zig");
     _ = @import("detect.zig");
+    _ = @import("init_skeleton.zig");
     _ = @import("release/entry.zig");
     _ = @import("render.zig");
     _ = @import("config/root.zig");

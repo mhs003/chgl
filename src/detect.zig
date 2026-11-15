@@ -117,7 +117,10 @@ pub fn detect(allocator: std.mem.Allocator, probe: Probe, forced: ?[]const u8) E
         const format = if (text) |t| inferFormat(t) else Format.unknown;
         if (text) |t| allocator.free(t);
         const ranked = try allocator.alloc(Candidate, 1);
-        ranked[0] = .{ .path = path, .score = TIER_EXACT_ROOT, .reason = "given with --file", .format = format };
+        errdefer allocator.free(ranked);
+        // The caller frees every candidate path, so this one must be owned too
+        // rather than pointing at the argv string.
+        ranked[0] = .{ .path = try allocator.dupe(u8, path), .score = TIER_EXACT_ROOT, .reason = "given with --file", .format = format };
         return .{ .chosen = ranked[0], .ranked = ranked };
     }
 

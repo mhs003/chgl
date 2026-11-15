@@ -12,6 +12,7 @@ const detect = @import("detect.zig");
 const errors = @import("errors.zig");
 const fs = @import("fs.zig");
 const git = @import("git/root.zig");
+const init_skeleton = @import("init_skeleton.zig");
 const plan_mod = @import("plan.zig");
 const render = @import("render.zig");
 const source = @import("version/source.zig");
@@ -78,6 +79,7 @@ fn run(init: std.process.Init, args: []const [:0]const u8, out: *std.Io.Writer, 
 
     switch (opts.command) {
         .init => return cmdInit(gpa, init, opts, err),
+        .config_init => return cmdConfigInit(gpa, init, opts, err),
         .detect => return cmdDetect(gpa, init, opts, out, err),
         .log, .generate => return cmdGenerate(gpa, init, opts, out, err),
     }
@@ -96,15 +98,117 @@ fn usageMessage(e: cli.ParseError) []const u8 {
     };
 }
 
+/// `chgl init`: create the changelog, or start one when the file is empty.
+///
+/// It never rewrites a file it cannot parse. A changelog with content but no
+/// version headings is somebody's work, and guessing where a release section
+/// belongs is how changelogs get corrupted.
 fn cmdInit(gpa: std.mem.Allocator, init: std.process.Init, opts: cli.Options, err: *std.Io.Writer) !u8 {
-    var env = config.EnvGetter{ .map = init.environ_map };
-    const dir = config.configDirFrom(config.PLATFORM, env.getter()) orelse {
-        try err.writeAll("chgl: cannot determine the config directory; set HOME or XDG_CONFIG_HOME\n");
+    const repo = findRepo(init, opts) catch {
+        try err.writeAll("chgl: not inside a git repository\n");
         return 1;
     };
-    const path = try std.fmt.allocPrint(gpa, "{s}/config.toml", .{dir});
-    defer gpa.free(path);
+    defer gpa.free(repo);
 
+    var opened = fs.Fs.open(init.io, repo) catch {
+        try err.print("chgl: cannot open {s}\n", .{repo});
+        return 1;
+    };
+    defer opened.close();
+
+    const forced: ?[]const u8 = opts.file;
+    const result = detect.detect(gpa, .{
+        .ctx = &opened,
+        .exists = fs.Fs.existsCallback,
+        .read = fs.Fs.readCallback,
+    }, forced) catch {
+        try err.writeAll("chgl: cannot inspect the working tree\n");
+        return 1;
+    };
+    defer {
+        for (result.ranked) |c| gpa.free(c.path);
+        result.deinit(gpa);
+    }
+
+    var path_buf: [256]u8 = undefined;
+    const chosen = result.chosen;
+    const path: []const u8 = if (chosen) |c| c.path else try std.fmt.bufPrint(&path_buf, "{s}", .{"CHANGELOG.md"});
+
+    // A changelog in another format is a deliberate choice, not something to
+    // shadow with a Markdown file beside it. An empty (or not-yet-written)
+    // file has no format to respect, so it is only refused once it has
+    // content: detection cannot infer Markdown from nothing.
+    const existing = opened.readAlloc(gpa, path);
+    defer if (existing) |t| gpa.free(t);
+    const has_content = if (existing) |t| t.len != 0 else false;
+
+    if (chosen) |c| {
+        // A bare title has no format yet; `init` starts it as Keep a Changelog
+        // and keeps the title, so it is not a competing format.
+        const title_only = if (existing) |t| init_skeleton.titleOnly(t) != null else false;
+        if (!c.format.writable() and has_content and !title_only) {
+            try err.print("chgl: {s} is not Markdown; chgl only writes Markdown (pass --file to choose a target)\n", .{c.path});
+            return 1;
+        }
+    }
+
+    if (existing) |text| {
+        if (text.len != 0) {
+            if (init_skeleton.hasVersionHeading(text)) {
+                try err.print("chgl: {s} already has releases; nothing to create\n", .{path});
+                return 0;
+            }
+            // A ready-to-use file: the next run writes under this heading.
+            if (init_skeleton.hasUnreleased(text)) {
+                try err.print("chgl: {s} is ready; run chgl to add the next release\n", .{path});
+                return 0;
+            }
+            // Keep a lone `# Title`: it is the file's own heading, and the
+            // skeleton would duplicate it.
+            if (init_skeleton.titleOnly(text)) |tail| {
+                const started = try init_skeleton.startExisting(gpa, text, tail);
+                defer gpa.free(started);
+                opened.writeAtomic(gpa, path, started) catch {
+                    try err.print("chgl: cannot write {s}\n", .{path});
+                    return 1;
+                };
+                if (!opts.quiet) try err.print("chgl: started {s} (added [Unreleased])\n", .{path});
+                return 0;
+            }
+            try err.print("chgl: {s} has content but no version headings; leaving it alone (add a `## [Unreleased]` heading where releases should go)\n", .{path});
+            return 1;
+        }
+    }
+
+    const skeleton = try init_skeleton.empty(gpa);
+    defer gpa.free(skeleton);
+    opened.writeAtomic(gpa, path, skeleton) catch {
+        try err.print("chgl: cannot write {s}\n", .{path});
+        return 1;
+    };
+    if (!opts.quiet) try err.print("chgl: wrote {s}; add entries, then run chgl\n", .{path});
+    return 0;
+}
+
+fn cmdConfigInit(gpa: std.mem.Allocator, init: std.process.Init, opts: cli.Options, err: *std.Io.Writer) !u8 {
+    // An explicit --config names the file to write. CHGL_CONFIG is not honoured
+    // here on purpose: it points at a config to *read*, and writing there would
+    // overwrite the file the user is editing.
+    const path: []const u8 = if (opts.config) |p|
+        try gpa.dupe(u8, p)
+    else blk: {
+        var env = config.EnvGetter{ .map = init.environ_map };
+        const dir = config.configDirFrom(config.PLATFORM, env.getter()) orelse {
+            try err.writeAll("chgl: cannot determine the config directory; set HOME or XDG_CONFIG_HOME\n");
+            return 1;
+        };
+        break :blk try std.fmt.allocPrint(gpa, "{s}/config.toml", .{dir});
+    };
+    defer gpa.free(path);
+    const dir: []const u8 = blk: {
+        const slash = std.mem.lastIndexOfScalar(u8, path, '/') orelse break :blk ".";
+        break :blk if (slash == 0) "/" else path[0..slash];
+    };
     const cwd = std.Io.Dir.cwd();
     cwd.createDirPath(init.io, dir) catch {
         try err.print("chgl: cannot create {s}\n", .{dir});
@@ -216,7 +320,8 @@ fn cmdGenerate(gpa: std.mem.Allocator, init: std.process.Init, opts: cli.Options
 
 fn generateWith(gpa: std.mem.Allocator, init: std.process.Init, opts_in: cli.Options, cfg: config.Config, out: *std.Io.Writer, err: *std.Io.Writer) !u8 {
     var opts = opts_in;
-    const runner = if (opts.repo) |r| git.Runner.init(init.io, gpa).inDir(r) else git.Runner.init(init.io, gpa);
+    var runner = if (opts.repo) |r| git.Runner.init(init.io, gpa).inDir(r) else git.Runner.init(init.io, gpa);
+    runner.verbose = opts.verbose;
 
     const repo = findRepo(init, opts) catch {
         try err.writeAll("chgl: not inside a git repository\n");
@@ -537,14 +642,17 @@ fn todayUtc(gpa: std.mem.Allocator, init: std.process.Init) ![]u8 {
 fn reportPlanError(e: anytype, err: *std.Io.Writer, opts: cli.Options) !void {
     _ = opts;
     switch (e) {
-        error.NoChangelog => try err.writeAll("chgl: no changelog found; create one (CHANGELOG.md) or pass --file\n"),
+        error.NoChangelog => try err.writeAll("chgl: no changelog found; create one with `chgl init`, or pass --file\n"),
         error.FragmentsOnly => try err.writeAll("chgl: this repository uses changelog fragments; chgl does not read them yet\n"),
         error.SectionExists => try err.writeAll("chgl: that release section already exists (pass --force to write it again)\n"),
-        error.NotMarkdown => try err.writeAll("chgl: the detected changelog is not Markdown (see above)\n"),
+        // The path is the useful part, and it is no longer available here, so
+        // the message says what to do instead of pointing at a notice that was
+        // never printed.
+        error.NotMarkdown => try err.writeAll("chgl: the detected changelog is not Markdown; chgl only writes Markdown (pass --file to choose a .md file)\n"),
         error.Unparsable => try err.writeAll("chgl: the changelog has no version headings, so a release section has no place to go\n"),
         error.NoRepo => try err.writeAll("chgl: the repository has no commits\n"),
         error.GitMissing => try err.writeAll("chgl: git is not installed\n"),
-        error.GitFailed => try err.writeAll("chgl: a git command failed (see above)\n"),
+        error.GitFailed => try err.writeAll("chgl: a git command failed; run with --verbose to see it\n"),
         else => try err.writeAll("chgl: failed to build the release\n"),
     }
 }
