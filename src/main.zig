@@ -410,9 +410,8 @@ fn generateWith(gpa: std.mem.Allocator, init: std.process.Init, opts_in: cli.Opt
             var vbuf: [64]u8 = undefined;
             break :blk try std.fmt.bufPrint(&msg_buf, "chore(release): {s}{s}", .{ plan.version_style.prefix, try v.render(&vbuf) });
         } else "chore: update changelog";
-        // Commit as whoever the repository says we are, never as whoever the
-        // environment claims: an inherited GIT_AUTHOR_EMAIL would attribute a
-        // release to a stranger's GitHub account.
+        // Commit as the repository's configured identity, not as whatever
+        // identity the environment happens to carry.
         var scrub_env = worktree.scrubbedEnviron(gpa, init.environ_map) catch {
             try err.writeAll("chgl: out of memory\n");
             return 1;

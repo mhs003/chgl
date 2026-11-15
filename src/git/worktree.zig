@@ -83,15 +83,10 @@ pub fn commit(runner: git.Runner, message: []const u8, only_paths: ?[]const []co
     return spawnCommit(runner, full, message);
 }
 
-/// `git commit` prefers `GIT_AUTHOR_NAME` and friends over `user.name`, and
-/// ordinary `chgl` users never set them. They run on CI runners that do.
-///
-/// If one is inherited there, the release commit is attributed to the account
-/// whose login it names — and GitHub accounts that merely share the *tool's*
-/// name exist. `gh pr create` on a GitHub runner set exactly these variables to
-/// `chgl` while implementing this tool, and four releases were credited to that
-/// unrelated account, creating a phantom contributor. Dropping them makes the
-/// commit use the repository's configured identity everywhere.
+/// Variables `git commit` reads in preference to `user.name`/`user.email`.
+/// They are dropped before committing so the repository's configured identity
+/// is used; CI runners export them, and a release must not be attributed to
+/// whichever account an inherited address happens to belong to.
 const identity_overrides = [_][]const u8{
     "GIT_AUTHOR_NAME",
     "GIT_AUTHOR_EMAIL",
