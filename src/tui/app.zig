@@ -91,6 +91,9 @@ pub const State = struct {
     version_input: std.ArrayList(u8) = .empty,
     /// What the app decided the run should do when the user quits the editor.
     outcome: Outcome = .cancelled,
+    /// What applying will do, chosen on the confirmation screen.
+    commit: bool = false,
+    create_tag: bool = false,
 
     pub const Outcome = enum {
         cancelled,
@@ -98,6 +101,13 @@ pub const State = struct {
         write_commit,
         write_commit_tag,
     };
+
+    /// The outcome implied by the commit/tag choices on the confirm screen.
+    pub fn chosenOutcome(self: State) Outcome {
+        if (self.create_tag) return .write_commit_tag;
+        if (self.commit) return .write_commit;
+        return .write;
+    }
 
     pub fn init(view: View, allocator: std.mem.Allocator) State {
         return .{ .view = view, .allocator = allocator };
@@ -166,9 +176,24 @@ pub fn handleKey(state: *State, key: Key) Action {
         },
         .confirm => switch (key) {
             .char => |c| switch (c) {
-                'y' => return .{ .quit = state.outcome },
+                'y' => return .{ .quit = state.chosenOutcome() },
                 'n', 'q' => {
                     state.mode = .list;
+                    return .{ .redraw = {} };
+                },
+                // The screen says what will happen; these choose it. Without
+                // them, committing or tagging meant relaunching with flags,
+                // which defeats the point of confirming here.
+                'c' => {
+                    state.commit = !state.commit;
+                    // A tag without a commit would tag a tree the changelog
+                    // was never written into.
+                    if (!state.commit) state.create_tag = false;
+                    return .{ .redraw = {} };
+                },
+                't' => {
+                    state.create_tag = !state.create_tag;
+                    if (state.create_tag) state.commit = true;
                     return .{ .redraw = {} };
                 },
                 else => return .{ .redraw = {} },
@@ -211,7 +236,16 @@ pub fn handleKey(state: *State, key: Key) Action {
                     state.mode = .preview;
                     state.scroll = 0;
                 },
-                'a' => state.mode = .confirm,
+                'a' => {
+                    // Confirming always means "apply what this screen shows".
+                    // Seeded from the flags the user started with; without this
+                    // the state kept the cancel outcome it was initialised with
+                    // (no flags means write=false), so `y` quit as if nothing
+                    // had been asked for.
+                    state.commit = state.outcome == .write_commit or state.outcome == .write_commit_tag;
+                    state.create_tag = state.outcome == .write_commit_tag;
+                    state.mode = .confirm;
+                },
                 '?' => state.mode = .help,
                 'q' => return .{ .quit = .cancelled },
                 else => {},
@@ -445,7 +479,7 @@ fn drawConfirm(state: *State, buf: *cell.Buffer) void {
     _ = buf.put(2, y, fbs.buffered(), .good);
 
     y += 1;
-    const mode_text = switch (state.outcome) {
+    const mode_text = switch (state.chosenOutcome()) {
         .cancelled, .write => " commit: no",
         .write_commit => " commit: yes",
         .write_commit_tag => " commit: yes, tag: yes",
@@ -464,7 +498,7 @@ fn drawConfirm(state: *State, buf: *cell.Buffer) void {
     fbs.print(" {d} entries, {d} skipped", .{ keep, skip }) catch {};
     _ = buf.put(2, y, fbs.buffered(), .dim);
 
-    frameBottom(buf, "y apply   n back   (nothing is written until you answer)");
+    frameBottom(buf, "y apply   c commit   t tag   n back   (nothing is written until you answer)");
 }
 
 // ------------------------------------------------------------------- tests
@@ -670,6 +704,63 @@ test "apply requires a confirmation" {
     _ = handleKey(&state, .{ .char = 'a' });
     const action = handleKey(&state, .{ .char = 'y' });
     try testing.expectEqual(Action{ .quit = .write }, action);
+}
+
+test "confirming with no flags still applies the write" {
+    // Regression: opened with no flags, `outcome` starts as .cancelled because
+    // nothing was asked for on the command line, so pressing `a` then `y` quit
+    // as a cancel and wrote nothing. The confirm screen looked identical either
+    // way, which is why only an outcome-level test catches it.
+    var entries = [_]entry_mod.Entry{};
+    var fake = Fake{ .entries_buf = &entries };
+    var state = State.init(fake.view(), testing.allocator);
+    try testing.expectEqual(State.Outcome.cancelled, state.outcome);
+
+    _ = handleKey(&state, .{ .char = 'a' });
+    const action = handleKey(&state, .{ .char = 'y' });
+    try testing.expectEqual(Action{ .quit = .write }, action);
+}
+
+test "the confirm screen can choose commit and tag" {
+    var entries = [_]entry_mod.Entry{};
+    var fake = Fake{ .entries_buf = &entries };
+
+    var state = State.init(fake.view(), testing.allocator);
+    _ = handleKey(&state, .{ .char = 'a' });
+    _ = handleKey(&state, .{ .char = 'c' });
+    try testing.expectEqual(Action{ .quit = .write_commit }, handleKey(&state, .{ .char = 'y' }));
+
+    // A tag implies a commit: tagging a tree the changelog never entered would
+    // label the wrong content.
+    state = State.init(fake.view(), testing.allocator);
+    _ = handleKey(&state, .{ .char = 'a' });
+    _ = handleKey(&state, .{ .char = 't' });
+    try testing.expectEqual(Action{ .quit = .write_commit_tag }, handleKey(&state, .{ .char = 'y' }));
+
+    // Turning the commit off must also drop the tag.
+    state = State.init(fake.view(), testing.allocator);
+    _ = handleKey(&state, .{ .char = 'a' });
+    _ = handleKey(&state, .{ .char = 't' });
+    _ = handleKey(&state, .{ .char = 'c' });
+    try testing.expectEqual(Action{ .quit = .write }, handleKey(&state, .{ .char = 'y' }));
+}
+
+test "confirm shows the choice, not just the flags it started with" {
+    var entries = [_]entry_mod.Entry{};
+    var fake = Fake{ .entries_buf = &entries };
+    var state = State.init(fake.view(), testing.allocator);
+    _ = handleKey(&state, .{ .char = 'a' });
+
+    var buf = try draw(&state, testing.allocator, 80, 24);
+    defer buf.deinit();
+    var all: [8192]u8 = undefined;
+    try testing.expect(std.mem.indexOf(u8, screenText(&buf, &all), "commit: no") != null);
+
+    _ = handleKey(&state, .{ .char = 'c' });
+    var buf2 = try draw(&state, testing.allocator, 80, 24);
+    defer buf2.deinit();
+    var all2: [8192]u8 = undefined;
+    try testing.expect(std.mem.indexOf(u8, screenText(&buf2, &all2), "commit: yes") != null);
 }
 
 test "preview shows the exact file content" {
