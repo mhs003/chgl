@@ -67,7 +67,6 @@ pub const EXAMPLE_TOML =
     \\[ui]
     \\# auto | dark | light | mono
     \\theme = "auto"
-    \\mouse = false
     \\
 ;
 
@@ -96,8 +95,7 @@ pub const EXAMPLE_JSON =
     \\    "extra_instructions": ""
     \\  },
     \\  "ui": {
-    \\    "theme": "auto",
-    \\    "mouse": false
+    \\    "theme": "auto"
     \\  }
     \\}
     \\
@@ -150,9 +148,11 @@ pub const Config = struct {
         timeout_secs: u64 = 60,
     };
 
+    /// Reserved for the editor's appearance. `mouse` was removed rather than
+    /// shipped as a setting that does nothing: choosing what a key means is the
+    /// only supported way to drive the editor.
     pub const Ui = struct {
         theme: []const u8 = "auto",
-        mouse: bool = false,
     };
 
     /// Validate semantics that parsing cannot express.
@@ -288,7 +288,7 @@ fn knownKeysFor(section: []const u8) ?[]const []const u8 {
     if (std.mem.eql(u8, section, "output")) return &.{ "commit_links", "issue_links" };
     if (std.mem.eql(u8, section, "polish")) return &.{ "enabled", "max_entries", "extra_instructions" };
     if (std.mem.eql(u8, section, "provider")) return &.{ "base_url", "model", "api_key", "api_key_env", "timeout_secs" };
-    if (std.mem.eql(u8, section, "ui")) return &.{ "theme", "mouse" };
+    if (std.mem.eql(u8, section, "ui")) return &.{"theme"};
     return null;
 }
 

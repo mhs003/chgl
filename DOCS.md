@@ -295,7 +295,6 @@ extra_instructions = ""
 
 [ui]
 theme = "auto"           # auto | dark | light | mono
-mouse = false
 
 # Only needed when [polish] is on. Any OpenAI-compatible endpoint.
 # [provider]

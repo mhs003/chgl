@@ -314,6 +314,13 @@ if ! skip_group tui; then
     after=$(cat "$d/CHANGELOG.md")
     expect_eq "the editor writes nothing on its own" "1" "$([ "$before" = "$after" ] && echo 1 || echo 0)"
 
+    # A pipe is never a terminal, so the default must be plain text: this is the
+    # half of "editor at a terminal, text in a pipe" that a script can check.
+    out=$(run --repo "$d")
+    expect_contains "a piped run prints text, not escape codes" "$out" "## [0.8.0]" "$out"
+    esc=$(printf '%s' "$out" | LC_ALL=C grep -c "$(printf '\033')" || true)
+    expect_eq "a piped run never emits escape codes" "0" "$esc"
+
     # Without a terminal, --tui must fall back rather than hang.
     out=$(run_code --repo "$d" --tui)
     expect_contains "no terminal falls back instead of hanging" "$out" "## [0.8.0]" "$out"

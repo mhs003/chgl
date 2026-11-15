@@ -308,7 +308,15 @@ fn generateWith(gpa: std.mem.Allocator, init: std.process.Init, opts_in: cli.Opt
         return 0;
     }
 
-    if (opts.tui and !opts.no_tui) {
+    // Documented behaviour: with no flags at all, a person at a terminal gets
+    // the editor and a pipe gets plain text, without having to remember `-i`.
+    // `--write`/`--commit`/`--create-tag` were asked for explicitly, so they
+    // stay scriptable and never open a UI.
+    const scripted = opts.write or opts.commit or opts.create_tag or opts.dry_run;
+    const terminal_available = tui.isTty(init.io, .stdin()) and tui.isTty(init.io, .stdout());
+    const open_editor = (opts.tui or (terminal_available and !scripted)) and !opts.no_tui;
+
+    if (open_editor) {
         var terminal = tui.Terminal.open(init.io) catch {
             try err.writeAll("chgl: --tui needs a terminal (no /dev/tty); showing the preview instead\n");
             const section = try plan.section(links);

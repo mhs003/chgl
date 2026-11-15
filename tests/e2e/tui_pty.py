@@ -94,6 +94,51 @@ def drive(binary, cwd, keys):
     return os.waitstatus_to_exitcode(status), out
 
 
+def drive_default(binary, cwd):
+    """Run with no flags at all, then quit."""
+    pid, fd = pty.fork()
+    if pid == 0:
+        os.chdir(cwd)
+        os.environ["TERM"] = "xterm-256color"
+        os.execv(binary, [binary])
+
+    out = b""
+    deadline = time.time() + 5
+    while time.time() < deadline and b"Keep" not in out:
+        ready, _, _ = select.select([fd], [], [], 0.1)
+        if ready:
+            try:
+                out += os.read(fd, 65536)
+            except OSError:
+                break
+    try:
+        os.write(fd, b"q")
+    except OSError:
+        pass
+    time.sleep(0.5)
+    while True:
+        ready, _, _ = select.select([fd], [], [], 0.1)
+        if not ready:
+            break
+        try:
+            chunk = os.read(fd, 65536)
+        except OSError:
+            break
+        if not chunk:
+            break
+        out += chunk
+    try:
+        os.close(fd)
+    except OSError:
+        pass
+    try:
+        _, status = os.waitpid(pid, 0)
+        code = os.waitstatus_to_exitcode(status)
+    except ChildProcessError:
+        code = -1
+    return code, out
+
+
 def main():
     if len(sys.argv) != 2:
         print("usage: tui_pty.py <path-to-chgl>", file=sys.stderr)
@@ -131,6 +176,17 @@ def main():
             "the kept entry is present",
             "stop the menu still drifting" in written,
         )
+
+        # With no flags a person at a terminal gets the editor; a pipe gets
+        # text. Both are documented, so both are checked here.
+        repo_bare = os.path.join(tmp, "repo_bare")
+        os.makedirs(repo_bare)
+        make_repo(repo_bare)
+        before = open(os.path.join(repo_bare, "CHANGELOG.md")).read()
+        code, screen = drive_default(binary, repo_bare)
+        check("no flags opens the editor when there is a terminal", b"Keep" in screen, repr(screen[-40:]))
+        after = open(os.path.join(repo_bare, "CHANGELOG.md")).read()
+        check("the default editor writes nothing on quit", before == after)
 
         # q must never write.
         repo2 = os.path.join(tmp, "repo2")

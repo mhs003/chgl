@@ -10,4 +10,5 @@ pub const PlanView = app.PlanView;
 pub const Terminal = term.Terminal;
 pub const run = term.run;
 pub const dumpFrame = term.dumpFrame;
+pub const isTty = term.isTty;
 pub const defaultOutcome = app.defaultOutcome;
