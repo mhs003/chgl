@@ -1,0 +1,72 @@
+name: ci
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+env:
+  # Pinned by .zigversion; a floor in build.zig.zon is not a pin.
+  ZIG_VERSION: 0.16.0
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+
+      - name: Check the pinned version matches
+        shell: bash
+        run: |
+          want=$(tr -d '[:space:]' < .zigversion)
+          [ "$want" = "$ZIG_VERSION" ] || {
+            echo ".zigversion says $want but CI uses $ZIG_VERSION"
+            exit 1
+          }
+
+      - name: Formatting
+        shell: bash
+        run: zig fmt --check build.zig src tests
+
+      - name: Unit tests
+        run: zig build test --summary all
+
+      - name: Build
+        run: zig build -Doptimize=ReleaseSafe
+
+      # The end-to-end harness is a shell script; on Windows it runs under the
+      # bash that GitHub's Windows runners provide.
+      - name: End-to-end
+        shell: bash
+        run: sh tests/e2e/run.sh
+
+      - name: Editor under a pty
+        if: runner.os != 'Windows'
+        shell: bash
+        run: python3 tests/e2e/tui_pty.py "${{ github.workspace }}/zig-out/bin/chgl"
+
+  dogfood:
+    # chgl must be able to read its own history: this is the acceptance test
+    # that the parsing and grouping still agree with what is committed.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # tags are the release boundary
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - run: zig build -Doptimize=ReleaseSafe
+      - name: Explain the current range
+        run: ./zig-out/bin/chgl --dry-run --explain
+      - name: Detection reports a writable changelog
+        run: ./zig-out/bin/chgl detect
