@@ -243,10 +243,16 @@ if ! skip_group commit; then
     # same entries under a new heading. That has to be said out loud.
     d7=$(seed_zap)
     out=$(run --repo "$d7" --write --commit 2>&1)
-    expect_contains "an untagged release points at --create-tag" "$out" "no tag created" "$out"
+    # One line per run, and --quiet silences even that.
+    expect_contains "the summary names what happened" "$out" "committed" "$out"
+    lines=$(printf '%s' "$out" | grep -c '^chgl:')
+    expect_eq "one chgl line, not four" "1" "$lines"
     d8=$(seed_zap)
     out=$(run --repo "$d8" --write --commit --create-tag 2>&1)
-    expect_not_contains "a tagged release says nothing of the sort" "$out" "no tag created" "$out"
+    expect_contains "a tagged release says so on the same line" "$out" "committed, tagged" "$out"
+    d11=$(seed_zap)
+    out=$(run --repo "$d11" --write --commit --quiet 2>&1 | grep '^chgl:' || true)
+    expect_eq "--quiet prints no chgl lines (git's own output stays)" "" "$out"
 
     # The file can run ahead of the tags when CI tags on push. A second run in
     # that window must not rewrite the same entries under a new heading.

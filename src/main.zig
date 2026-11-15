@@ -356,7 +356,11 @@ fn generateWith(gpa: std.mem.Allocator, init: std.process.Init, opts_in: cli.Opt
         try err.print("chgl: cannot write {s}\n", .{plan.file_path});
         return 1;
     };
-    try err.print("chgl: wrote {s}\n", .{plan.file_path});
+
+    // One line per run, not one per action: the caller cares that the release
+    // landed, and git already prints the commit it made. `--quiet` means quiet.
+    var wrote_version = false;
+    var version_note: []const u8 = "";
 
     // Version write-back is opt-in: many projects bump in a separate commit and
     // rewriting their manifest here would show up as an unexpected diff.
@@ -381,9 +385,8 @@ fn generateWith(gpa: std.mem.Allocator, init: std.process.Init, opts_in: cli.Opt
                         return 1;
                     };
                     gpa.free(updated);
-                    try err.print("chgl: set {s} to {s}\n", .{ vs.path, new_version });
-                } else {
-                    try err.print("chgl: {s} is already {s}\n", .{ vs.path, new_version });
+                    wrote_version = true;
+                    version_note = try std.fmt.allocPrint(gpa, ", {s} {s}", .{ vs.path, new_version });
                 }
             }
         } else {
@@ -423,15 +426,6 @@ fn generateWith(gpa: std.mem.Allocator, init: std.process.Init, opts_in: cli.Opt
             try err.writeAll("chgl: commit failed\n");
             return 1;
         };
-        try err.print("chgl: committed {s}\n", .{msg});
-
-        // A commit without a tag leaves the range open until something tags
-        // it. CI that tags on push does that; without one, the next run would
-        // reuse every commit (the file's newest version stops the duplicate,
-        // and says so). Point at the option instead of leaving it a mystery.
-        if (!opts.create_tag) {
-            try err.writeAll("chgl: no tag created; the release is untagged until CI tags it (pass --create-tag if nothing else does)\n");
-        }
     }
 
     if (opts.create_tag) {
@@ -453,6 +447,15 @@ fn generateWith(gpa: std.mem.Allocator, init: std.process.Init, opts_in: cli.Opt
             return 1;
         };
         try err.print("chgl: tagged {s}\n", .{tag_name});
+    }
+
+    if (!opts.quiet) {
+        try err.print("chgl: wrote {s}{s}{s}{s}\n", .{
+            plan.file_path,
+            if (wrote_version) version_note else "",
+            if (opts.commit) ", committed" else "",
+            if (opts.create_tag) ", tagged" else "",
+        });
     }
 
     return 0;

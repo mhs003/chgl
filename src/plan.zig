@@ -313,7 +313,10 @@ pub fn build(allocator: std.mem.Allocator, req: Request) Error!Plan {
                 var vbuf: [64]u8 = undefined;
                 const shown = try file_version.render(&vbuf);
                 if (releaseBoundary(runner, allocator, shown)) |boundary| {
-                    try notes(&notices, allocator, "the changelog already documents {s}, which is newer than {s}; releasing what came after it", .{ shown, t.name });
+                    // The range label already carries "(from the file)", so
+                    // this stays a one-liner rather than a paragraph repeated
+                    // on every run until the tag exists.
+                    try notes(&notices, allocator, "boundary: {s} from the changelog (newer than {s})", .{ shown, t.name });
                     allocator.free(range.description);
                     range.description = try std.fmt.allocPrint(allocator, "{s}..HEAD (from the file)", .{shown});
                     range.from_tag = boundary;

@@ -120,7 +120,7 @@ Supported: `*`, `?`, `[a-z]`, `[!a-z]`, and `{feat,fix}`.
 | Option | Meaning |
 | --- | --- |
 | `--config <PATH>` | Config file, instead of `$CHGL_CONFIG` or the default. |
-| `-q`, `--quiet` | Suppress notices and warnings on stderr. |
+| `-q`, `--quiet` | Suppress `chgl`'s notices and summary on stderr (git's own output is untouched). |
 | `-v`, `--verbose` | Print diagnostics, including each `git` command. |
 | `-V`, `--version` | Print the version. |
 | `-h`, `--help` | Print help. |
