@@ -72,7 +72,7 @@ fn run(init: std.process.Init, args: []const [:0]const u8, out: *std.Io.Writer, 
             defer gpa.free(p);
             try out.print("config: {s}\n", .{p});
         } else {
-            try out.writeAll("config: none (defaults apply; `chgl init` writes one)\n");
+            try out.writeAll("config: none (defaults apply; `chgl config init` writes one)\n");
         }
         return 0;
     }
