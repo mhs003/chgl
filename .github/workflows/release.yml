@@ -27,15 +27,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
-    # The bot's own push must not start another release, or a single fix can
-    # cascade into several tags. `chgl` already skips `chore(release)` commits
-    # when listing changes; this stops the trigger as well.
-    if: >-
-      !startsWith(github.event.head_commit.message, 'chore(release)') &&
-      !startsWith(github.event.head_commit.message, 'chore(changelog)')
     outputs:
-      released: ${{ steps.cut.outputs.released }}
-      version: ${{ steps.cut.outputs.version }}
+      released: ${{ steps.cut.outputs.released || steps.check.outputs.released }}
+      version: ${{ steps.cut.outputs.version || steps.check.outputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -47,7 +41,43 @@ jobs:
         with:
           version: ${{ env.ZIG_VERSION }}
 
-      - name: Check the token can push
+      - name: Is this push already released?
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # The bot's own push must not start another release, or one fix
+          # cascades into several tags. Skipping the whole job was too blunt:
+          # a hand-made `chgl --create-tag` also ends in a chore(release)
+          # commit, and that one needs this workflow to build its binaries.
+          #
+          # What matters is not the message, but whether HEAD is already a
+          # finished release: tagged, and with a published release.
+          tag=$(git tag --points-at HEAD | grep -E '^v[0-9]' | tail -1 || true)
+          if [ -z "$tag" ]; then
+            echo "released=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if gh release view "$tag" >/dev/null 2>&1; then
+            # The bot's own push lands here: the release already exists.
+            echo "$tag is already published; nothing to do"
+            echo "done=true" >> "$GITHUB_OUTPUT"
+            echo "released=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Tagged but never published: the binaries are still missing. The
+          # tag is the release, so there is nothing for chgl to cut; hand the
+          # existing tag to the build and publish jobs.
+          echo "$tag exists without a release; publishing it"
+          echo "done=true" >> "$GITHUB_OUTPUT"
+          echo "released=true" >> "$GITHUB_OUTPUT"
+          echo "version=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Cut the release with chgl
+        # Runs only when HEAD is not a finished release already.
+        if: steps.check.outputs.done != 'true'
+        id: cut
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -68,11 +98,8 @@ jobs:
             exit 1
           fi
 
-      - run: zig build -Doptimize=ReleaseSafe
+          zig build -Doptimize=ReleaseSafe
 
-      - name: Cut the release with chgl
-        id: cut
-        run: |
           set +e
           ./zig-out/bin/chgl --write --commit --create-tag --bump-version
           code=$?
