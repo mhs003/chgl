@@ -1,0 +1,24 @@
+# Keep line endings identical on every checkout.
+#
+# Without this, GitHub's Windows runners check out with CRLF (core.autocrlf
+# defaults to true there), and `zig fmt --check` reports every file as
+# unformatted even though the committed bytes are fine. Changelog fixtures
+# depend on exact bytes too: one of them is deliberately CRLF to prove the
+# editor preserves it, and a checkout that rewrites it would silently drop
+# the only test of that behaviour.
+* text=auto eol=lf
+
+# Explicit, so the fixtures survive a Windows checkout unchanged.
+*.md text eol=lf
+*.zig text eol=lf
+*.sh text eol=lf
+*.toml text eol=lf
+*.zon text eol=lf
+*.yml text eol=lf
+
+# test/fixtures/crlf.md must keep its CRLF bytes; `text` would normalise it.
+tests/fixtures/crlf.md -text
+
+# Binaries stay binary.
+*.png binary
+*.gz binary

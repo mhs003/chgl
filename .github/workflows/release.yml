@@ -1,8 +1,19 @@
 name: release
 
-# Every push to master: derive the next version from Conventional Commits,
-# write it into CHANGELOG.md *with chgl itself*, commit and tag, then build the
-# platform binaries. A docs-only push tags nothing.
+# Every push to master: derive the next version from Conventional Commits, write
+# it into CHANGELOG.md *with chgl itself*, commit and tag, then build the
+# binaries. A docs-only push tags nothing.
+#
+# Preconditions are checked before anything is written. A release that commits
+# and tags and only then discovers it cannot push leaves the branch and the tag
+# in a state nobody can reproduce, so the order here is deliberate:
+#   1. can we push at all?
+#   2. is there anything to release?
+#   3. only then write, commit, tag, push.
+#
+# Requires (repository settings, not this file):
+#   Settings > Actions > General > Workflow permissions:
+#     "Read and write permissions"   (default is read-only, which cannot push)
 on:
   push:
     branches: [master]
@@ -14,32 +25,43 @@ env:
 jobs:
   version:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     outputs:
       released: ${{ steps.cut.outputs.released }}
       version: ${{ steps.cut.outputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
+          # Tags are the release boundary, so the whole history is required.
           fetch-depth: 0
-          # A token that can push the tag back, so the release commit is real.
-          token: ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: false
 
       - uses: mlugg/setup-zig@v2
         with:
           version: ${{ env.ZIG_VERSION }}
 
-      - run: zig build -Doptimize=ReleaseSafe
-
-      - name: Commit identity
-        shell: bash
+      - name: Check the token can push
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Must be set before chgl commits, or the commit has no author.
+          set -euo pipefail
           git config user.name "chgl release bot"
           git config user.email "chgl@users.noreply.github.com"
+          # `git push --dry-run` reports a permission problem without moving
+          # anything. Doing this first means a read-only token fails here, with
+          # an actionable message, instead of after a commit and a tag exist.
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if ! git push --dry-run origin HEAD:refs/heads/master 2>/tmp/push.err; then
+            echo "::error::cannot push to master. Set Settings > Actions > General > Workflow permissions to 'Read and write permissions', or give this workflow a token with contents:write."
+            sed 's/ghs_[A-Za-z0-9_]*/***/' /tmp/push.err
+            exit 1
+          fi
+
+      - run: zig build -Doptimize=ReleaseSafe
 
       - name: Cut the release with chgl
         id: cut
-        shell: bash
         run: |
           set +e
           ./zig-out/bin/chgl --write --commit --create-tag --bump-version
@@ -47,25 +69,22 @@ jobs:
           set -e
           case "$code" in
             0)
+              tag=$(git tag --points-at HEAD | grep -E '^v[0-9]' | tail -1)
+              # The tag must exist before the push, or `--follow-tags` sends
+              # nothing and the next run sees no release boundary again.
               git push origin HEAD --follow-tags
               echo "released=true" >> "$GITHUB_OUTPUT"
+              echo "version=$tag" >> "$GITHUB_OUTPUT"
               ;;
             3)
-              # Nothing releasable: no tag, no binaries, no release.
-              echo "nothing to release"
+              echo "nothing releasable in this push; no tag, no release"
               echo "released=false" >> "$GITHUB_OUTPUT"
               ;;
             *)
-              echo "chgl failed with exit $code"
+              echo "::error::chgl exited $code"
               exit "$code"
               ;;
           esac
-
-      - name: Report the tag
-        id: tag
-        shell: bash
-        run: echo "version=$(git tag --points-at HEAD | grep -E '^v[0-9]' | tail -1)" >> "$GITHUB_OUTPUT"
-        if: steps.cut.outputs.released == 'true'
 
   build:
     needs: version
@@ -93,7 +112,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ needs.version.outputs.version || github.sha }}
+          ref: ${{ needs.version.outputs.version }}
       - uses: mlugg/setup-zig@v2
         with:
           version: ${{ env.ZIG_VERSION }}
@@ -116,8 +135,8 @@ jobs:
           elif command -v shasum >/dev/null; then
             (cd dist && shasum -a 256 "$out" > "$out.sha256")
           else
-            (cd dist && certutil -hashfile "$out" SHA256 | sed -n 2p | tr -d ' \r' > "$out.sha256.sum" \
-              && awk '{print $1"  ${{ matrix.name }}}' "$out.sha256.sum" > "$out.sha256" && rm "$out.sha256.sum")
+            (cd dist && certutil -hashfile "$out" SHA256 | sed -n 2p | tr -d ' \r' > sum.txt \
+              && awk '{print $1"  '"$out"'}' sum.txt > "$out.sha256" && rm sum.txt)
           fi
 
       - uses: actions/upload-artifact@v4
@@ -128,24 +147,27 @@ jobs:
   publish:
     needs: [version, build]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       # checkout first: it cleans the workspace, which would delete artifacts
       # downloaded before it.
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.version }}
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
 
       - name: Release body is the changelog section
-        shell: bash
         run: |
           set -euo pipefail
           tag="${{ needs.version.outputs.version }}"
           version="${tag#v}"
           awk -v want="## [$version]" '
-            $0 ~ want { inside = 1 }
-            inside && NR > 1 && /^## \[/ && $0 !~ want { exit }
+            index($0, want) == 1 { inside = 1 }
+            inside && /^## \[/ && index($0, want) != 1 { exit }
             inside { print }
           ' CHANGELOG.md > notes.md
           [ -s notes.md ] || echo "Release $version" > notes.md
