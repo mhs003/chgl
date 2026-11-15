@@ -239,6 +239,28 @@ if ! skip_group commit; then
     files=$(git -C "$d" show --name-only --format= HEAD)
     expect_eq "release commit touches only the changelog" "CHANGELOG.md" "$files"
 
+    # Without a tag the range never closes, so the next run would rewrite the
+    # same entries under a new heading. That has to be said out loud.
+    d7=$(seed_zap)
+    out=$(run --repo "$d7" --write --commit 2>&1)
+    expect_contains "an untagged release points at --create-tag" "$out" "no tag created" "$out"
+    d8=$(seed_zap)
+    out=$(run --repo "$d8" --write --commit --create-tag 2>&1)
+    expect_not_contains "a tagged release says nothing of the sort" "$out" "no tag created" "$out"
+
+    # The file can run ahead of the tags when CI tags on push. A second run in
+    # that window must not rewrite the same entries under a new heading.
+    d9=$(seed_zap)
+    run --repo "$d9" --write --commit >/dev/null 2>&1
+    before=$(git -C "$d9" rev-parse HEAD:CHANGELOG.md)
+    out=$(run_code --repo "$d9" --write)
+    expect_contains "a release newer than every tag stops the next run" "$out" "exit=3" "$out"
+    after=$(git -C "$d9" rev-parse HEAD:CHANGELOG.md)
+    expect_eq "the changelog is left untouched" "$before" "$after"
+    sections=$(grep -c '^## ' "$d9/CHANGELOG.md")
+    # [Unreleased], the release, and the previous one: no second 0.8.x.
+    expect_eq "no second release section appears" "3" "$sections"
+
     # A fresh repository for the tag path: the one above is already released.
     d2=$(seed_zap)
     out=$(run --repo "$d2" --write --commit --create-tag)

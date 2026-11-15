@@ -296,6 +296,24 @@ pub fn build(allocator: std.mem.Allocator, req: Request) Error!Plan {
     } else if (base_tag) |t| {
         range.from_tag = t.name;
         range.description = try std.fmt.allocPrint(allocator, "{s}..HEAD", .{t.name});
+
+        // The file can run ahead of the tags: CI may tag on push, so between a
+        // `--commit` release and that push the newest section has no tag yet.
+        // Releasing again in that window would rewrite the same entries under
+        // a new heading, so the file's own newest version wins when it is
+        // newer than the tag.
+        if (doc.newestVersion()) |file_version| {
+            if (semver.Semver.order(file_version, t.version) == .gt) {
+                var vbuf: [64]u8 = undefined;
+                const shown = try file_version.render(&vbuf);
+                try notes(&notices, allocator, "the changelog already documents {s}, which is newer than {s}; nothing to release until it is tagged", .{ shown, t.name });
+                allocator.free(range.description);
+                range.description = try std.fmt.allocPrint(allocator, "{s}..HEAD (from the file)", .{shown});
+                // HEAD..HEAD reads no commits, so the existing "nothing to
+                // release" path (exit 3) reports it without a second code path.
+                range.from_tag = head;
+            }
+        }
     } else {
         range.whole_history = true;
         range.description = try allocator.dupe(u8, "whole history");

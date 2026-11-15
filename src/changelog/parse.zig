@@ -15,6 +15,7 @@
 //! - link-reference definitions at the bottom (`[1.2.3]: …/compare/…`).
 
 const std = @import("std");
+const semver = @import("../version/semver.zig");
 
 pub const Heading = struct {
     /// Byte offset of the `## ` line in the original file.
@@ -101,6 +102,20 @@ pub const Document = struct {
             if (!s.heading.unreleased) return s;
         }
         return null;
+    }
+
+    /// The highest version written in the file, which is a release boundary
+    /// even when nothing is tagged: CI may tag on push, so the file can run
+    /// ahead of the tags for a while.
+    pub fn newestVersion(self: Document) ?semver.Semver {
+        var best: ?semver.Semver = null;
+        for (self.sections) |s| {
+            if (s.heading.unreleased) continue;
+            const v = semver.parseWithStyle(.{ .prefix = "v" }, s.heading.label) orelse continue;
+            if (v.isPrerelease()) continue;
+            if (best == null or semver.Semver.order(v, best.?) == .gt) best = v;
+        }
+        return best;
     }
 
     /// Does a section with this label already exist?

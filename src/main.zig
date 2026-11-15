@@ -424,6 +424,14 @@ fn generateWith(gpa: std.mem.Allocator, init: std.process.Init, opts_in: cli.Opt
             return 1;
         };
         try err.print("chgl: committed {s}\n", .{msg});
+
+        // A commit without a tag leaves the range open until something tags
+        // it. CI that tags on push does that; without one, the next run would
+        // reuse every commit (the file's newest version stops the duplicate,
+        // and says so). Point at the option instead of leaving it a mystery.
+        if (!opts.create_tag) {
+            try err.writeAll("chgl: no tag created; the release is untagged until CI tags it (pass --create-tag if nothing else does)\n");
+        }
     }
 
     if (opts.create_tag) {
