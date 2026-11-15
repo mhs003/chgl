@@ -246,6 +246,16 @@ if ! skip_group commit; then
     subject=$(git -C "$d2" log -1 --format=%s)
     expect_eq "the tag commit is the release commit" "chore(release): v0.8.0" "$subject"
 
+    # A manifest that lags the tags must not produce a version below them.
+    d5=$(new_repo stale_manifest)
+    printf '# Changelog\n\n## [0.2.0] - 2026-01-01\n\n- x\n' > "$d5/CHANGELOG.md"
+    printf '[package]\nname = "z"\nversion = "0.1.0"\n' > "$d5/Cargo.toml"
+    git -C "$d5" add -A && git -C "$d5" commit -qm "chore: init" && git -C "$d5" tag v0.2.0
+    commit "$d5" "fix: y"
+    out=$(run --repo "$d5" --dry-run)
+    expect_contains "a stale manifest still yields a new version" "$out" "## [0.2.1]" "$out"
+    expect_contains "the mismatch is explained" "$out" "is tagged" "$out"
+
     # A tag already sitting on HEAD means there is nothing in range; the run
     # says so instead of writing an empty section.
     d3=$(seed_zap)

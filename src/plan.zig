@@ -357,7 +357,20 @@ pub fn build(allocator: std.mem.Allocator, req: Request) Error!Plan {
     if (req.version_override) |text| {
         version = semver.parseWithStyle(style, text);
     } else if (current_version) |cur| {
-        version = entry_mod.nextVersion(cur, release, req.cfg.version.bump);
+        // The version source can lag the tags (a hand-made tag, or a release
+        // cut before the manifest was bumped). Bumping a stale source would
+        // propose a version that already exists, so the *higher* of the source
+        // and the newest tag is the base.
+        var base = cur;
+        if (base_tag) |t| {
+            if (semver.Semver.order(t.version, cur) == .gt) {
+                base = t.version;
+                var cur_buf: [64]u8 = undefined;
+                const cur_text = std.fmt.bufPrint(&cur_buf, "{d}.{d}.{d}", .{ cur.major, cur.minor, cur.patch }) catch "?";
+                try notes(&notices, allocator, "the version source says {s} but {s} is tagged; deriving from the tag", .{ cur_text, t.name });
+            }
+        }
+        version = entry_mod.nextVersion(base, release, req.cfg.version.bump);
     }
 
     // Refuse to write the same release twice: a second run would otherwise
