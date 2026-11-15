@@ -166,7 +166,10 @@ pub fn insert(
     const body = std.mem.trim(u8, opts.body, " \t\r\n");
     if (body.len != 0) {
         try out.appendSlice(allocator, eol);
-        try out.appendSlice(allocator, body);
+        // The body may be written with `\n` regardless of the file: a CRLF
+        // changelog with one LF line shows a spurious change on every line of
+        // the diff, so line endings are re-applied here.
+        try appendWithEol(allocator, &out, body, eol);
         try out.appendSlice(allocator, eol);
     }
 
@@ -406,6 +409,22 @@ test "footer rewrite points at the new tag" {
     try std.testing.expectEqualStrings("https://github.com/o/r/releases/tag/v0.8.0", release);
 }
 
+/// Append `text`, converting every `\n` (including the `\n` of a `\r\n`) to
+/// `eol`.
+fn appendWithEol(allocator: std.mem.Allocator, out: *std.ArrayList(u8), text: []const u8, eol: []const u8) !void {
+    if (std.mem.eql(u8, eol, "\n")) {
+        try out.appendSlice(allocator, text);
+        return;
+    }
+    var it = std.mem.splitScalar(u8, text, '\n');
+    var first = true;
+    while (it.next()) |line| {
+        if (!first) try out.appendSlice(allocator, eol);
+        first = false;
+        try out.appendSlice(allocator, std.mem.trimEnd(u8, line, "\r"));
+    }
+}
+
 test "insert produces exactly one blank line around the section" {
     const a = std.testing.allocator;
     const text = "# Changelog\n\nIntro line.\n\n## [0.7.0] - 2026-01-01\n\n### Added\n\n- old\n";
@@ -488,4 +507,42 @@ test "footer rewrite is a no-op without reference definitions" {
     const doc = try parse.parse(a, text);
     defer doc.deinit(a);
     try std.testing.expect(try rewriteFooter(a, doc, .{ .new_label = "0.8.0", .new_tag = "v0.8.0", .previous_tag = null, .repo_url = null }) == null);
+}
+
+test "inserting into every fixture keeps its line endings" {
+    const a = std.testing.allocator;
+    const names = [_][]const u8{
+        "keep-a-changelog.md",
+        "bare-headings.md",
+        "crlf.md",
+        "no-trailing-newline.md",
+        "title-only.md",
+    };
+    for (names) |name| {
+        const path = try std.fmt.allocPrint(a, "tests/fixtures/{s}", .{name});
+        defer a.free(path);
+        const text = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, path, a, .limited(1 << 20));
+        defer a.free(text);
+
+        const doc = try parse.parse(a, text);
+        defer doc.deinit(a);
+        const placement = try place(a, doc, true);
+        defer a.free(placement.absorbed);
+        const out = try insert(a, text, placement, .{
+            .heading = "## [9.9.9] - 2030-01-01",
+            .body = "### Added\n\n- smoke",
+            .eol = eolOf(doc),
+        });
+        defer a.free(out);
+        try std.testing.expect(std.mem.indexOf(u8, out, "## [9.9.9] - 2030-01-01") != null);
+
+        // A CRLF file must stay CRLF; a bare LF would show up on every line.
+        if (std.mem.eql(u8, eolText(eolOf(doc)), "\r\n")) {
+            var i: usize = 0;
+            while (std.mem.indexOfScalarPos(u8, out, i, '\n')) |at| {
+                try std.testing.expect(at > 0 and out[at - 1] == '\r');
+                i = at + 1;
+            }
+        }
+    }
 }

@@ -391,3 +391,54 @@ test "recognises heading spellings" {
     try std.testing.expect(isVersionHeading("### Added") == null);
     try std.testing.expect(isVersionHeading("# Title") == null);
 }
+
+// ------------------------------------------------------------- fixtures
+//
+// Real-world changelogs committed under tests/fixtures. The editor's promise
+// is that it never rewrites what it did not touch, so parsing and re-rendering
+// each of these must be byte-identical — CRLF, missing trailing newlines and
+// all.
+
+const fixture_names = [_][]const u8{
+    "keep-a-changelog.md",
+    "bare-headings.md",
+    "crlf.md",
+    "no-trailing-newline.md",
+    "title-only.md",
+};
+
+test "every fixture round-trips byte for byte" {
+    const a = std.testing.allocator;
+    for (fixture_names) |name| {
+        const path = try std.fmt.allocPrint(a, "tests/fixtures/{s}", .{name});
+        defer a.free(path);
+        const text = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, path, a, .limited(1 << 20));
+        defer a.free(text);
+
+        const doc = try parse(a, text);
+        defer doc.deinit(a);
+        const rendered = try doc.render(a);
+        defer a.free(rendered);
+        try std.testing.expectEqualStrings(text, rendered);
+    }
+}
+
+test "the detected sections of the fixtures are the ones a human would name" {
+    const a = std.testing.allocator;
+    const text = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, "tests/fixtures/keep-a-changelog.md", a, .limited(1 << 20));
+    defer a.free(text);
+    const doc = try parse(a, text);
+    defer doc.deinit(a);
+    try std.testing.expectEqual(@as(usize, 3), doc.sections.len);
+    try std.testing.expect(doc.findUnreleased() != null);
+    try std.testing.expectEqualStrings("1.2.0", doc.newestRelease().?.heading.label);
+    try std.testing.expectEqual(@as(usize, 3), doc.refs.len);
+
+    const bare = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, "tests/fixtures/bare-headings.md", a, .limited(1 << 20));
+    defer a.free(bare);
+    const bdoc = try parse(a, bare);
+    defer bdoc.deinit(a);
+    // `Released on 2026-11-12.` must not be mistaken for a section.
+    try std.testing.expectEqual(@as(usize, 2), bdoc.sections.len);
+    try std.testing.expectEqualStrings("0.13.8", bdoc.newestRelease().?.heading.label);
+}

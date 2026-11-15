@@ -57,11 +57,6 @@ pub const Result = struct {
     pub fn deinit(self: Result, allocator: std.mem.Allocator) void {
         allocator.free(self.ranked);
     }
-
-    /// True when the only thing found was a fragment system.
-    pub fn fragmentsOnly(self: Result) bool {
-        return self.chosen == null and self.fragment_dir != null;
-    }
 };
 
 /// Filesystem probe, so detection is testable without touching disk.

@@ -408,7 +408,8 @@ fn generateWith(gpa: std.mem.Allocator, init: std.process.Init, opts_in: cli.Opt
         var tag_buf: [128]u8 = undefined;
         var vbuf: [64]u8 = undefined;
         const tag_name = try @import("version/semver.zig").formatTag(plan.version_style, v, &tag_buf);
-        const msg = try std.fmt.bufPrint(&msg_buf2, "Release {s}", .{try v.render(&vbuf)});
+        var tag_msg_buf: [256]u8 = undefined;
+        const msg = try std.fmt.bufPrint(&tag_msg_buf, "Release {s}", .{try v.render(&vbuf)});
         worktree.tag(runner, tag_name, msg) catch |e| {
             if (e == error.TagExists) {
                 try err.print("chgl: tag {s} already exists\n", .{tag_name});
@@ -420,13 +421,8 @@ fn generateWith(gpa: std.mem.Allocator, init: std.process.Init, opts_in: cli.Opt
         try err.print("chgl: tagged {s}\n", .{tag_name});
     }
 
-    if (cfg.version.write_back and opts.bump_version) {
-        try err.writeAll("chgl: --bump-version is not implemented in this build yet\n");
-    }
     return 0;
 }
-
-var msg_buf2: [256]u8 = undefined;
 
 fn configErrorMessage(e: anytype) []const u8 {
     return switch (e) {
