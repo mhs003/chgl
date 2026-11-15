@@ -38,7 +38,7 @@ pub const specs = [_]Spec{
     .{ .long = "write", .help = "Insert the section into the file" },
     .{ .long = "commit", .help = "Commit the changelog after writing" },
     .{ .long = "commit-only", .help = "With --commit, record only the changelog even if other work is staged" },
-    .{ .long = "bump-version", .help = "With --commit, also set the version in its source file" },
+    .{ .long = "bump-version", .help = "Also set the version in its source file (Cargo.toml, package.json, …)" },
     .{ .long = "create-tag", .help = "Tag the release (needs a version)" },
     .{ .long = "force", .help = "Replace an existing release section" },
     .{ .long = "tui", .short = 'i', .help = "Open the interactive editor (needs a terminal)" },

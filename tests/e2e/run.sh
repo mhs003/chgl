@@ -319,6 +319,44 @@ if ! skip_group tui; then
     expect_contains "no terminal falls back instead of hanging" "$out" "## [0.8.0]" "$out"
 fi
 
+# ------------------------------------------------------------------- config
+if ! skip_group config; then
+    t "configuration"
+    d=$(new_repo cfg)
+    printf '# Changelog\n\n## [0.1.0] - 2026-01-01\n\n- x\n' > "$d/CHANGELOG.md"
+    printf '[package]\nname = "z"\nversion = "0.1.0"\n' > "$d/Cargo.toml"
+    git -C "$d" add -A && git -C "$d" commit -qm "chore: init" && git -C "$d" tag v0.1.0
+    commit "$d" "feat(cli): keep me"
+    commit "$d" "fix(api): drop me"
+
+    conf="$tmp/conf"
+    mkdir -p "$conf/chgl"
+    printf '[changelog]\nexclude = ["fix(api):*"]\n' > "$conf/chgl/config.toml"
+    out=$(XDG_CONFIG_HOME="$conf" "$bin" --repo "$d" --dry-run 2>&1 || true)
+    expect_contains "a config exclude applies" "$out" "keep me" "$out"
+    expect_not_contains "the excluded entry is gone" "$out" "drop me" "$out"
+
+    printf '[changelog]\nmax_commit = 5\n' > "$conf/chgl/config.toml"
+    out=$(XDG_CONFIG_HOME="$conf" "$bin" --repo "$d" --dry-run 2>&1 || true)
+    expect_contains "a typo in the config is an error" "$out" "unknown key" "$out"
+
+    printf '[changelog]\nunreleased = "sideways"\n' > "$conf/chgl/config.toml"
+    out=$(XDG_CONFIG_HOME="$conf" "$bin" --repo "$d" --dry-run 2>&1 || true)
+    expect_contains "an invalid enum is an error" "$out" "invalid value" "$out"
+
+    # init writes a usable config, and refuses to clobber one.
+    conf2="$tmp/conf2"
+    mkdir -p "$conf2"
+    XDG_CONFIG_HOME="$conf2" "$bin" init >/dev/null 2>&1
+    [ -f "$conf2/chgl/config.toml" ] && pass "init writes config.toml" || fail "init writes config.toml" "missing"
+    code=$(XDG_CONFIG_HOME="$conf2" code_of init)
+    expect_eq "init refuses to overwrite" "1" "$code"
+    code=$(XDG_CONFIG_HOME="$conf2" code_of init --force)
+    expect_eq "init --force overwrites" "0" "$code"
+    out=$(XDG_CONFIG_HOME="$conf2" "$bin" -V 2>&1)
+    expect_contains "-V names the config in use" "$out" "$conf2/chgl/config.toml" "$out"
+fi
+
 # --------------------------------------------------------------- exit codes
 if ! skip_group exit; then
     t "exit codes"

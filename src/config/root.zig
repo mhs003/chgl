@@ -240,7 +240,15 @@ fn tryToml(a: std.mem.Allocator, text: []const u8) Error!Config {
     var p = toml.Parser(Config).init(a);
     defer p.deinit();
     // Everything the config points at lives in `a`, which `Parsed` keeps alive.
-    const parsed = p.parseString(text) catch return error.ParseFailed;
+    const parsed = p.parseString(text) catch |e| {
+        // A value in the document did not fit the struct — an enum spelled
+        // wrongly, a number out of range — which is a validation failure, not a
+        // syntax error, and the message should say so.
+        return switch (e) {
+            error.InvalidValueType, error.InvalidEnumTag, error.InvalidCharacter, error.UnexpectedCharacter => error.Invalid,
+            else => error.ParseFailed,
+        };
+    };
     return parsed.value;
 }
 
@@ -412,7 +420,9 @@ test "unknown keys are rejected" {
 
 test "invalid enum values are rejected" {
     const a = std.testing.allocator;
-    try std.testing.expectError(error.ParseFailed, parseText(a, "config.toml", "[changelog]\nunreleased = \"nope\"\n"));
+    // A value of the wrong type or spelling is a validation failure, so the
+    // message can name the key instead of blaming the syntax.
+    try std.testing.expectError(error.Invalid, parseText(a, "config.toml", "[changelog]\nunreleased = \"nope\"\n"));
     try std.testing.expectError(error.Invalid, parseText(a, "config.toml", "[version]\nbump = \"sometimes\"\n"));
 }
 

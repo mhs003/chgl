@@ -64,6 +64,15 @@ fn run(init: std.process.Init, args: []const [:0]const u8, out: *std.Io.Writer, 
     }
     if (opts.show_version) {
         try out.print("chgl {s}\n", .{VERSION});
+        // The config path is the other thing people cannot find.
+        if (opts.config) |p| {
+            try out.print("config: {s}\n", .{p});
+        } else if (configPath(gpa, opts, init) catch null) |p| {
+            defer gpa.free(p);
+            try out.print("config: {s}\n", .{p});
+        } else {
+            try out.writeAll("config: none (defaults apply; `chgl init` writes one)\n");
+        }
         return 0;
     }
 
