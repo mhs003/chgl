@@ -102,34 +102,42 @@ pub const Plan = struct {
     pub fn resultingFile(self: *Plan, links: render.LinkStyle) ![]u8 {
         const body = try sectionBody(self, links);
         defer self.allocator.free(body);
-        var inserted = try changelog.edit.insert(self.allocator, self.original, self.placement, .{
+
+        // Order matters: every edit below is computed from offsets in `base`,
+        // so `base` may only change *before* the next edit is calculated.
+        //
+        // 1. Empty the [Unreleased] content that this release absorbed, while
+        //    the offsets still describe the file on disk.
+        var base: []const u8 = self.original;
+        var owned_base: ?[]u8 = null;
+        errdefer if (owned_base) |b| self.allocator.free(b);
+        if (self.placement.unreleased != null and self.absorbed_cleared) {
+            const cleared = try changelog.edit.clearUnreleased(self.allocator, self.original, self.doc, changelog.edit.eolOf(self.doc));
+            owned_base = cleared;
+            base = cleared;
+        }
+        // 2. Splice the new section in.
+        var out = try changelog.edit.insert(self.allocator, base, self.placement, .{
             .heading = self.heading,
             .body = body,
             .eol = changelog.edit.eolOf(self.doc),
         });
-        errdefer self.allocator.free(inserted);
+        errdefer self.allocator.free(out);
 
-        // The absorbed entries now live in the new section; leaving them under
-        // `[Unreleased]` would list every one of them twice.
-        if (self.placement.unreleased != null and self.absorbed_cleared) {
-            const cleared = try changelog.edit.clearUnreleased(self.allocator, inserted, self.doc, changelog.edit.eolOf(self.doc));
-            self.allocator.free(inserted);
-            inserted = cleared;
-        }
-
-        // Reference-style changelogs need their footer moved forward too, or
-        // the new heading renders as literal `[0.8.0]` text.
+        // 3. Move reference-style footers forward, or the new heading renders
+        //    as literal `[0.8.0]` text.
         if (try self.footerUpdate()) |new_trailer| {
             defer self.allocator.free(new_trailer);
-            const with_footer = self.doc.trailer.len;
-            if (with_footer > 0 and inserted.len >= with_footer and std.mem.endsWith(u8, inserted, self.doc.trailer)) {
-                const head = inserted[0 .. inserted.len - self.doc.trailer.len];
+            if (self.doc.trailer.len > 0 and out.len >= self.doc.trailer.len and
+                std.mem.endsWith(u8, out, self.doc.trailer))
+            {
+                const head = out[0 .. out.len - self.doc.trailer.len];
                 const rebuilt = try std.fmt.allocPrint(self.allocator, "{s}{s}", .{ head, new_trailer });
-                self.allocator.free(inserted);
-                inserted = rebuilt;
+                self.allocator.free(out);
+                out = rebuilt;
             }
         }
-        return inserted;
+        return out;
     }
 
     /// The updated footer block, or null when the file has none.
@@ -532,4 +540,36 @@ test "plan text survives the commit log buffer" {
     var release = try entry_mod.build(a, &commits, .{});
     defer release.deinit(a);
     try std.testing.expectEqualStrings("one", release.entries.items[0].text());
+}
+
+test "clearing an empty unreleased section never touches the new heading" {
+    // Regression: the clear ran on the *post-insert* bytes using offsets from
+    // the pre-insert file, which cut the heading and re-emitted [Unreleased].
+    const a = std.testing.allocator;
+    const text =
+        "# Changelog\n\nIntro.\n\n## [Unreleased]\n\n" ++
+        "[Unreleased]: https://github.com/o/r/compare/v0.1.0...HEAD\n" ++
+        "[0.1.0]: https://github.com/o/r/compare/v0.0.1...v0.1.0\n";
+    const doc = try changelog.parse.parse(a, text);
+    defer doc.deinit(a);
+    const placement = try changelog.edit.place(a, doc, true);
+    defer a.free(placement.absorbed);
+    try std.testing.expect(placement.unreleased != null);
+
+    const cleared = try changelog.edit.clearUnreleased(a, text, doc, .lf);
+    defer a.free(cleared);
+    const out = try changelog.edit.insert(a, cleared, placement, .{
+        .heading = "## [0.2.0] - 2026-11-15",
+        .body = "### Added\n\n- y",
+        .eol = .lf,
+    });
+    defer a.free(out);
+    try std.testing.expect(std.mem.indexOf(u8, out, "## [0.2.0] - 2026-11-15") != null);
+    var count: usize = 0;
+    var idx: usize = 0;
+    while (std.mem.indexOfPos(u8, out, idx, "## [Unreleased]")) |at| {
+        count += 1;
+        idx = at + 1;
+    }
+    try std.testing.expectEqual(@as(usize, 1), count);
 }

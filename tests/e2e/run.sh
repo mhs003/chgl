@@ -203,6 +203,20 @@ if ! skip_group write; then
     expect_eq "absorbed bullet appears once" "1" "$count"
     expect_contains "unreleased heading is left empty for the next cycle" "$file" "## [Unreleased]" "$file"
 
+    # Regression: an empty [Unreleased] *and* a footer. Clearing the section
+    # used offsets from the pre-insert file, which truncated the new heading
+    # and duplicated the [Unreleased] heading.
+    d4=$(new_repo empty_unreleased_footer)
+    printf '# Changelog\n\nIntro.\n\n## [Unreleased]\n\n[Unreleased]: https://github.com/o/r/compare/v0.1.0...HEAD\n[0.1.0]: https://github.com/o/r/compare/v0.0.1...v0.1.0\n' > "$d4/CHANGELOG.md"
+    printf '[package]\nname = "z"\nversion = "0.1.0"\n' > "$d4/Cargo.toml"
+    git -C "$d4" add -A && git -C "$d4" commit -qm "chore: init" && git -C "$d4" tag v0.1.0
+    commit "$d4" "feat: y"
+    run --repo "$d4" --write >/dev/null
+    file=$(cat "$d4/CHANGELOG.md")
+    expect_contains "the new heading is intact" "$file" "## [0.2.0] - " "$file"
+    count=$(grep -c '^## \[Unreleased\]' "$d4/CHANGELOG.md")
+    expect_eq "the unreleased heading appears once" "1" "$count"
+
     # Footer links are updated when the file uses them.
     d3=$(new_repo footer)
     printf '# Changelog\n\n## [0.1.0] - 2026-01-01\n\n- first\n\n[Unreleased]: https://github.com/o/r/compare/v0.1.0...HEAD\n[0.1.0]: https://github.com/o/r/compare/v0.0.1...v0.1.0\n' > "$d3/CHANGELOG.md"
