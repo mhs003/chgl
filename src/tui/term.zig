@@ -95,8 +95,10 @@ pub const Terminal = struct {
 
     pub fn open(io: std.Io) Error!Terminal {
         if (builtin.os.tag == .windows) {
-            const in = std.Io.Dir.openFileAbsolute(io, "CONIN$", .{ .mode = .read_only }) catch return error.NotATerminal;
-            const out = std.Io.Dir.openFileAbsolute(io, "CONOUT$", .{ .mode = .read_write }) catch {
+            // `CONIN$`/`CONOUT$` are device names, not paths, so they cannot go
+            // through the "absolute path" helper (it asserts and panics).
+            const in = std.Io.Dir.cwd().openFile(io, "CONIN$", .{ .mode = .read_only }) catch return error.NotATerminal;
+            const out = std.Io.Dir.cwd().openFile(io, "CONOUT$", .{ .mode = .read_write }) catch {
                 in.close(io);
                 return error.NotATerminal;
             };

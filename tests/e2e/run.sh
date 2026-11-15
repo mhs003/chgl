@@ -332,29 +332,33 @@ if ! skip_group config; then
     conf="$tmp/conf"
     mkdir -p "$conf/chgl"
     printf '[changelog]\nexclude = ["fix(api):*"]\n' > "$conf/chgl/config.toml"
-    out=$(XDG_CONFIG_HOME="$conf" "$bin" --repo "$d" --dry-run 2>&1 || true)
+    out=$(CHGL_CONFIG="$conf/chgl/config.toml" "$bin" --repo "$d" --dry-run 2>&1 || true)
     expect_contains "a config exclude applies" "$out" "keep me" "$out"
     expect_not_contains "the excluded entry is gone" "$out" "drop me" "$out"
 
     printf '[changelog]\nmax_commit = 5\n' > "$conf/chgl/config.toml"
-    out=$(XDG_CONFIG_HOME="$conf" "$bin" --repo "$d" --dry-run 2>&1 || true)
+    out=$(CHGL_CONFIG="$conf/chgl/config.toml" "$bin" --repo "$d" --dry-run 2>&1 || true)
     expect_contains "a typo in the config is an error" "$out" "unknown key" "$out"
 
     printf '[changelog]\nunreleased = "sideways"\n' > "$conf/chgl/config.toml"
-    out=$(XDG_CONFIG_HOME="$conf" "$bin" --repo "$d" --dry-run 2>&1 || true)
+    out=$(CHGL_CONFIG="$conf/chgl/config.toml" "$bin" --repo "$d" --dry-run 2>&1 || true)
     expect_contains "an invalid enum is an error" "$out" "invalid value" "$out"
 
     # init writes a usable config, and refuses to clobber one.
     conf2="$tmp/conf2"
     mkdir -p "$conf2"
-    XDG_CONFIG_HOME="$conf2" "$bin" init >/dev/null 2>&1
-    [ -f "$conf2/chgl/config.toml" ] && pass "init writes config.toml" || fail "init writes config.toml" "missing"
+    # `init` writes to the platform config directory, which is %APPDATA% on
+    # Windows and XDG elsewhere, so the path is taken from what it reports
+    # rather than assumed.
+    init_out=$(XDG_CONFIG_HOME="$conf2" "$bin" init 2>&1)
+    written=$(printf '%s' "$init_out" | sed -n 's/.*wrote //p')
+    [ -n "$written" ] && [ -f "$written" ] && pass "init writes config.toml" || fail "init writes config.toml" "$init_out"
     code=$(XDG_CONFIG_HOME="$conf2" code_of init)
     expect_eq "init refuses to overwrite" "1" "$code"
     code=$(XDG_CONFIG_HOME="$conf2" code_of init --force)
     expect_eq "init --force overwrites" "0" "$code"
-    out=$(XDG_CONFIG_HOME="$conf2" "$bin" -V 2>&1)
-    expect_contains "-V names the config in use" "$out" "$conf2/chgl/config.toml" "$out"
+    out=$("$bin" -V --config "$written" 2>&1)
+    expect_contains "-V names the config in use" "$out" "$written" "$out"
 fi
 
 # --------------------------------------------------------------- exit codes
