@@ -160,6 +160,13 @@ pub const Terminal = struct {
 
     /// Ask the terminal for its size; falls back to 80x24 when unknown.
     pub fn measure(self: *Terminal) void {
+        if (builtin.os.tag == .windows) {
+            if (windowsConsoleSize(self.out.handle)) |size| {
+                self.width = size.cols;
+                self.height = size.rows;
+            }
+            return;
+        }
         var ws: std.posix.winsize = undefined;
         const rc = std.posix.system.ioctl(self.out.handle, std.posix.T.IOCGWINSZ, @intFromPtr(&ws));
         if (rc == 0 and ws.col > 0 and ws.row > 0) {
@@ -214,6 +221,36 @@ pub const Terminal = struct {
     }
 };
 
+/// Console size on Windows. `std.os.windows` does not bind the console API, so
+/// the one call needed is declared here rather than pulling in a binding
+/// generator for a single function.
+const WindowsConsoleSize = struct { cols: u16, rows: u16 };
+
+fn windowsConsoleSize(handle: std.os.windows.HANDLE) ?WindowsConsoleSize {
+    if (builtin.os.tag != .windows) return null;
+    const COORD = extern struct { X: i16, Y: i16 };
+    const SMALL_RECT = extern struct { Left: i16, Top: i16, Right: i16, Bottom: i16 };
+    const CONSOLE_SCREEN_BUFFER_INFO = extern struct {
+        dwSize: COORD,
+        dwCursorPosition: COORD,
+        wAttributes: u16,
+        srWindow: SMALL_RECT,
+        dwMaximumWindowSize: COORD,
+    };
+    const kernel32 = struct {
+        extern "kernel32" fn GetConsoleScreenBufferInfo(
+            hConsoleOutput: std.os.windows.HANDLE,
+            lpConsoleScreenBufferInfo: *CONSOLE_SCREEN_BUFFER_INFO,
+        ) callconv(.winapi) std.os.windows.BOOL;
+    };
+    var info: CONSOLE_SCREEN_BUFFER_INFO = undefined;
+    if (kernel32.GetConsoleScreenBufferInfo(handle, &info) == .FALSE) return null;
+    const cols = info.srWindow.Right - info.srWindow.Left + 1;
+    const rows = info.srWindow.Bottom - info.srWindow.Top + 1;
+    if (cols <= 0 or rows <= 0) return null;
+    return .{ .cols = @intCast(cols), .rows = @intCast(rows) };
+}
+
 fn styleFor(color: cell.Color) []const u8 {
     return switch (color) {
         .default => "\x1b[0m",
@@ -230,54 +267,67 @@ fn styleFor(color: cell.Color) []const u8 {
 /// Split out from the device so the decoder is unit-testable with a fake byte
 /// source.
 pub fn decode(t: *Terminal, b: u8) app.Key {
+    if (b != 0x1b) return decodeSingle(b);
+    // A lone ESC must not block waiting for a sequence that will never come.
+    // The tty is in raw mode with VMIN=1, VTIME=0, so peek with a short poll
+    // instead of guessing.
+    if (!inputPending(t)) return .escape;
+    var seq: [8]u8 = undefined;
+    var len: usize = 0;
+    while (len < seq.len) {
+        seq[len] = t.readByte() orelse break;
+        len += 1;
+        if (decodeEscape(seq[0..len])) |k| return k;
+        if (seq[0] != '[' and seq[0] != 'O') break;
+    }
+    return .escape;
+}
+
+/// One byte that is not the start of an escape sequence.
+pub fn decodeSingle(b: u8) app.Key {
     return switch (b) {
-        0x1b => {
-            // A lone ESC must not block waiting for a sequence that will never
-            // come. `/dev/tty` is in raw mode with VMIN=1, VTIME=0, so peek
-            // with a zero-timeout poll instead of guessing.
-            if (!inputPending(t)) return .escape;
-            const second = t.readByte() orelse return .escape;
-            if (second != '[' and second != 'O') return .escape;
-            const third = t.readByte() orelse return .escape;
-            return switch (third) {
-                'A' => .up,
-                'B' => .down,
-                'C' => .{ .char = 'L' },
-                'D' => .{ .char = 'H' },
-                'H' => .home,
-                'F' => .end,
-                '1', '4', '7', '8' => blk: {
-                    _ = t.readByte(); // the trailing `~`
-                    break :blk switch (third) {
-                        '1' => .home,
-                        '4' => .end,
-                        '7' => .home,
-                        '8' => .end,
-                        else => .escape,
-                    };
-                },
-                '5' => blk: {
-                    _ = t.readByte();
-                    break :blk .page_up;
-                },
-                '6' => blk: {
-                    _ = t.readByte();
-                    break :blk .page_down;
-                },
-                else => .escape,
-            };
-        },
-        'q' => .{ .char = 'q' },
         0x03 => .ctrl_c,
         0x0d, 0x0a => .enter,
         0x09 => .tab,
         ' ' => .space,
-        0x7f, 0x08 => .{ .char = 'H' },
         0x01 => .home,
         0x05 => .end,
         0x0e => .down,
         0x10 => .up,
+        // Backspace and Delete both mean "edit"; the editor does the rest.
+        0x7f, 0x08 => .{ .char = 'H' },
         else => if (b >= 0x20 and b < 0x7f) .{ .char = b } else .{ .char = 0 },
+    };
+}
+
+/// Decode a complete escape sequence, or null when more bytes are needed.
+/// Pure, so every terminal dialect can be tested on any platform.
+pub fn decodeEscape(seq: []const u8) ?app.Key {
+    if (seq.len < 2) return null;
+    if (seq[0] != '[' and seq[0] != 'O') return .escape;
+    return switch (seq[1]) {
+        'A' => .up,
+        'B' => .down,
+        // Ctrl-Left/Right arrive as CSI 1;5C, so `C`/`D` mean scroll
+        // left/right only when they stand alone.
+        'C' => .{ .char = 'L' },
+        'D' => .{ .char = 'H' },
+        'H' => .home,
+        'F' => .end,
+        'Z' => .{ .char = 'Z' }, // shift-tab
+        '1', '4', '5', '6', '7', '8' => blk: {
+            // Home/End/PgUp/PgDn are `CSI <n> ~`.
+            if (seq.len < 3) break :blk null;
+            if (seq[2] != '~') break :blk .escape;
+            break :blk switch (seq[1]) {
+                '1', '7' => .home,
+                '4', '8' => .end,
+                '5' => .page_up,
+                '6' => .page_down,
+                else => .escape,
+            };
+        },
+        else => .escape,
     };
 }
 
@@ -328,18 +378,31 @@ pub fn dumpFrame(state: *app.State, allocator: std.mem.Allocator, width: u16, he
     }
 }
 
-test "key decoding maps the common sequences" {
-    // The decoder needs a Terminal; these cases only need the first byte, so a
-    // fake with no pending input is enough.
-    var fake = Terminal{ .in = std.Io.File{ .handle = -1, .flags = .{ .nonblocking = false } }, .out = std.Io.File{ .handle = -1, .flags = .{ .nonblocking = false } }, .io = undefined };
-    _ = &fake;
-    try std.testing.expectEqual(app.Key.enter, decode(&fake, 0x0d));
-    try std.testing.expectEqual(app.Key.ctrl_c, decode(&fake, 0x03));
-    try std.testing.expectEqual(app.Key.space, decode(&fake, ' '));
-    try std.testing.expectEqual(app.Key{ .char = 'a' }, decode(&fake, 'a'));
+test "single bytes decode to the expected keys" {
+    try std.testing.expectEqual(app.Key.enter, decodeSingle(0x0d));
+    try std.testing.expectEqual(app.Key.ctrl_c, decodeSingle(0x03));
+    try std.testing.expectEqual(app.Key.space, decodeSingle(' '));
+    try std.testing.expectEqual(app.Key.tab, decodeSingle(0x09));
+    try std.testing.expectEqual(app.Key{ .char = 'a' }, decodeSingle('a'));
+    // Control bytes that are not bound must not turn into printable keys.
+    try std.testing.expectEqual(app.Key{ .char = 0 }, decodeSingle(0x02));
 }
 
-test "escape alone is escape, not the start of a sequence" {
-    var fake = Terminal{ .in = std.Io.File{ .handle = -1, .flags = .{ .nonblocking = false } }, .out = std.Io.File{ .handle = -1, .flags = .{ .nonblocking = false } }, .io = undefined };
-    try std.testing.expectEqual(app.Key.escape, decode(&fake, 0x1b));
+test "escape sequences decode without a terminal" {
+    try std.testing.expectEqual(app.Key.up, decodeEscape("[A").?);
+    try std.testing.expectEqual(app.Key.down, decodeEscape("[B").?);
+    try std.testing.expectEqual(app.Key.home, decodeEscape("[H").?);
+    try std.testing.expectEqual(app.Key.end, decodeEscape("[F").?);
+    try std.testing.expectEqual(app.Key.home, decodeEscape("[1~").?);
+    try std.testing.expectEqual(app.Key.end, decodeEscape("[4~").?);
+    try std.testing.expectEqual(app.Key.page_up, decodeEscape("[5~").?);
+    try std.testing.expectEqual(app.Key.page_down, decodeEscape("[6~").?);
+}
+
+test "incomplete sequences ask for more bytes" {
+    try std.testing.expect(decodeEscape("[") == null);
+    try std.testing.expect(decodeEscape("[5") == null);
+    // An unknown final byte is Escape, not a hang.
+    try std.testing.expectEqual(app.Key.escape, decodeEscape("[9~").?);
+    try std.testing.expectEqual(app.Key.escape, decodeEscape("[Q").?);
 }
