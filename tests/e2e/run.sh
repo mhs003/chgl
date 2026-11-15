@@ -257,9 +257,19 @@ if ! skip_group commit; then
     expect_contains "a release newer than every tag stops the next run" "$out" "exit=3" "$out"
     after=$(git -C "$d9" rev-parse HEAD:CHANGELOG.md)
     expect_eq "the changelog is left untouched" "$before" "$after"
-    sections=$(grep -c '^## ' "$d9/CHANGELOG.md")
     # [Unreleased], the release, and the previous one: no second 0.8.x.
-    expect_eq "no second release section appears" "3" "$sections"
+    expect_eq "no second release section appears" "3" "$(grep -c '^## ' "$d9/CHANGELOG.md")"
+
+    # But commits made *after* that untagged release are still unreleased and
+    # must be released, not swallowed by the file boundary. The manifest has to
+    # move on first: releasing the same commit set again would collide with the
+    # section already in the file.
+    d10=$(seed_zap)
+    run --repo "$d10" --bump-version --write --commit >/dev/null 2>&1
+    commit "$d10" "feat(web): a thing that happened after the release"
+    out=$(run --repo "$d10" --dry-run)
+    expect_contains "work after an untagged release is released" "$out" "a thing that happened after the release" "$out"
+    expect_contains "the version moves past the untagged release" "$out" "## [0.9.0]" "$out"
 
     # A fresh repository for the tag path: the one above is already released.
     d2=$(seed_zap)

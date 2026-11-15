@@ -28,6 +28,8 @@ pub const Range = struct {
     /// Human description for output, e.g. `v0.7.3..HEAD` or `whole history`.
     description: []const u8 = "",
     whole_history: bool = false,
+    /// The lower bound is a commit taken from the changelog, not a tag.
+    from_file: bool = false,
 };
 
 pub const Plan = struct {
@@ -300,18 +302,23 @@ pub fn build(allocator: std.mem.Allocator, req: Request) Error!Plan {
         // The file can run ahead of the tags: CI may tag on push, so between a
         // `--commit` release and that push the newest section has no tag yet.
         // Releasing again in that window would rewrite the same entries under
-        // a new heading, so the file's own newest version wins when it is
-        // newer than the tag.
+        // a new heading.
+        //
+        // The file's newest version is therefore the release boundary, but the
+        // commits *after* the one that wrote it are still unreleased. Bounding
+        // the range at that commit keeps them, instead of dropping everything
+        // newer than the untagged release.
         if (doc.newestVersion()) |file_version| {
             if (semver.Semver.order(file_version, t.version) == .gt) {
                 var vbuf: [64]u8 = undefined;
                 const shown = try file_version.render(&vbuf);
-                try notes(&notices, allocator, "the changelog already documents {s}, which is newer than {s}; nothing to release until it is tagged", .{ shown, t.name });
-                allocator.free(range.description);
-                range.description = try std.fmt.allocPrint(allocator, "{s}..HEAD (from the file)", .{shown});
-                // HEAD..HEAD reads no commits, so the existing "nothing to
-                // release" path (exit 3) reports it without a second code path.
-                range.from_tag = head;
+                if (releaseBoundary(runner, allocator, shown)) |boundary| {
+                    try notes(&notices, allocator, "the changelog already documents {s}, which is newer than {s}; releasing what came after it", .{ shown, t.name });
+                    allocator.free(range.description);
+                    range.description = try std.fmt.allocPrint(allocator, "{s}..HEAD (from the file)", .{shown});
+                    range.from_tag = boundary;
+                    range.from_file = true;
+                }
             }
         }
     } else {
@@ -520,6 +527,30 @@ fn readVersionSource(allocator: std.mem.Allocator, req: Request, out: *?source.S
         };
         out.* = s;
         return s;
+    }
+    return null;
+}
+
+/// The commit that wrote release `version` into the changelog, used as a range
+/// bound when the file is newer than every tag.
+///
+/// Only `chore(release)` counts. A later `chore(version): bump to 1.1.0` also
+/// ends with the version, and bounding at it would swallow the commits made
+/// between the release and that bump.
+/// Returns a hash owned by the caller, or null when none is found.
+fn releaseBoundary(runner: git.Runner, allocator: std.mem.Allocator, version: []const u8) ?[]u8 {
+    const out = runner.run(&.{ "git", "log", "--format=%H%x1f%s", "--max-count=200" }, true) catch return null;
+    defer out.deinit(runner.allocator);
+    if (!out.ok()) return null;
+
+    var lines = std.mem.splitScalar(u8, out.stdout, '\n');
+    while (lines.next()) |line| {
+        var f = std.mem.splitScalar(u8, line, '\x1f');
+        const hash = f.next() orelse continue;
+        const subject = f.next() orelse continue;
+        if (hash.len == 0) continue;
+        if (!std.mem.startsWith(u8, subject, "chore(release)")) continue;
+        if (std.mem.endsWith(u8, subject, version)) return allocator.dupe(u8, hash) catch null;
     }
     return null;
 }
