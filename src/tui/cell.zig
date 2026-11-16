@@ -14,12 +14,14 @@ pub const Color = enum(u8) {
     good,
     warn,
     bad,
-    selected,
 };
 
 pub const Cell = struct {
     ch: u21 = ' ',
     fg: Color = .default,
+    /// The selected row's background. `present` draws it and forces the fg to
+    /// black, so the bar is green for `Keep` and white for `Skip`.
+    bg: ?Color = null,
     /// False for the continuation column of a wide character.
     head: bool = true,
 };
@@ -60,20 +62,26 @@ pub const Buffer = struct {
             const w = codepointWidth(cp);
             if (w == 0) continue;
             if (col + w > self.width) break;
-            line[col] = .{ .ch = cp, .fg = fg };
-            if (w == 2 and col + 1 < self.width) line[col + 1] = .{ .ch = ' ', .fg = fg, .head = false };
+            // The bar is one column of the row, not the text that lands on it:
+            // the selftest draws a row before marking it, and drawing must
+            // never silently erase what the user is looking at.
+            const bar = line[col].bg;
+            line[col] = .{ .ch = cp, .fg = fg, .bg = bar };
+            if (w == 2 and col + 1 < self.width) line[col + 1] = .{ .ch = ' ', .fg = fg, .head = false, .bg = bar };
             col += w;
         }
         return col;
     }
 
-    /// Fill (x, y)..(x+len, y) with the reverse-video style.
-    pub fn highlight(self: *Buffer, x: u16, y: u16, len: u16) void {
+    /// Mark (x, y)..(x+len, y) as the selected row, with `color` behind it.
+    /// Wide characters are marked through their continuation cell, so the bar
+    /// has no holes in it.
+    pub fn highlight(self: *Buffer, x: u16, y: u16, len: u16, color: Color) void {
         if (y >= self.height) return;
         const line = self.row(y);
         var i = x;
         while (i < @min(x + len, self.width)) : (i += 1) {
-            line[i].fg = .selected;
+            line[i].bg = color;
         }
     }
 
@@ -159,10 +167,35 @@ test "highlight marks the requested cells only" {
     const a = std.testing.allocator;
     var b = try Buffer.init(a, 6, 1);
     defer b.deinit();
-    _ = b.put(0, 0, "hello", .default);
-    b.highlight(1, 0, 2);
-    try std.testing.expectEqual(Color.default, b.cells[0].fg);
-    try std.testing.expectEqual(Color.selected, b.cells[1].fg);
-    try std.testing.expectEqual(Color.selected, b.cells[2].fg);
-    try std.testing.expectEqual(Color.default, b.cells[3].fg);
+    _ = b.put(0, 0, "hello", .good);
+    b.highlight(1, 0, 2, .good);
+    try std.testing.expectEqual(@as(?Color, null), b.cells[0].bg);
+    try std.testing.expectEqual(@as(?Color, .good), b.cells[1].bg);
+    try std.testing.expectEqual(@as(?Color, .good), b.cells[2].bg);
+    try std.testing.expectEqual(@as(?Color, null), b.cells[3].bg);
+    // The bar is the background: the text keeps its own colour.
+    try std.testing.expectEqual(Color.good, b.cells[1].fg);
+}
+
+test "writing under the bar keeps the bar" {
+    const a = std.testing.allocator;
+    var b = try Buffer.init(a, 6, 1);
+    defer b.deinit();
+    b.highlight(0, 0, 6, .default);
+    _ = b.put(0, 0, "ab", .warn);
+    try std.testing.expectEqual(@as(?Color, .default), b.cells[0].bg);
+    try std.testing.expectEqual(@as(?Color, .default), b.cells[1].bg);
+    try std.testing.expectEqual(Color.warn, b.cells[0].fg);
+}
+
+test "wide characters do not punch a hole in the bar" {
+    const a = std.testing.allocator;
+    var b = try Buffer.init(a, 6, 1);
+    defer b.deinit();
+    b.highlight(0, 0, 6, .good);
+    _ = b.put(0, 0, "日本", .default);
+    try std.testing.expectEqual(@as(?Color, .good), b.cells[0].bg);
+    try std.testing.expect(!b.cells[1].head);
+    try std.testing.expectEqual(@as(?Color, .good), b.cells[1].bg);
+    try std.testing.expectEqual(@as(?Color, .good), b.cells[3].bg);
 }

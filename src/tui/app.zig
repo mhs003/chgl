@@ -405,8 +405,11 @@ fn drawList(state: *State, buf: *cell.Buffer) !void {
             @tagName(e.group),
             e.text(),
         });
-        _ = buf.put(1, row, fbs.buffered(), color);
-        if (selected) buf.highlight(0, row, buf.width - 2);
+        // The bar covers the whole row, as the selector always has; only its
+        // colour changes. Marked before the text so `put` keeps it and wide
+        // characters in the subject cannot punch a hole in it.
+        if (selected) buf.highlight(0, row, buf.width - 2, if (e.state == .keep) .good else .default);
+        _ = buf.put(1, row, line_buf[0..fbs.end], color);
         if (e.reason != .none) {
             // The reason is what makes a skip reviewable.
             var rbuf: [64]u8 = undefined;
@@ -653,6 +656,47 @@ test "the list shows every state as a word, with the reason" {
     try testing.expect(std.mem.indexOf(u8, screen, "CHANGELOG.md") != null);
     try testing.expect(std.mem.indexOf(u8, screen, "v0.7.3..HEAD") != null);
     try testing.expect(std.mem.indexOf(u8, screen, "0.7.3 -> 0.8.0") != null);
+}
+
+test "the selected row is a green bar for Keep, white for Skip" {
+    // The bar is the row's background, and its colour says what the entry
+    // will do: green for Keep, white for Skip. It used to be reverse video, a
+    // white block that said nothing.
+    var entries = [_]entry_mod.Entry{
+        testEntry("add a thing", .added, .keep),
+        testEntry("noise", .other, .skip),
+    };
+    var fake = Fake{ .entries_buf = &entries };
+    var state = State.init(fake.view(), testing.allocator);
+    var line_buf: [512]u8 = undefined;
+
+    // Cursor on the Keep entry: a green bar across the row.
+    var buf = try draw(&state, testing.allocator, 80, 24);
+    defer buf.deinit();
+    var row = rowOf(&buf, "add a thing", &line_buf);
+    try testing.expectEqual(@as(?cell.Color, .good), buf.cells[row * 80].bg);
+    try testing.expectEqual(@as(?cell.Color, .good), buf.cells[row * 80 + 40].bg);
+    // The other rows have no bar at all.
+    const other = rowOf(&buf, "noise", &line_buf);
+    try testing.expectEqual(@as(?cell.Color, null), buf.cells[other * 80].bg);
+
+    // Cursor on the Skip entry: the bar is the plain white one it always was.
+    buf.deinit();
+    state.move(1);
+    buf = try draw(&state, testing.allocator, 80, 24);
+    row = rowOf(&buf, "noise", &line_buf);
+    try testing.expectEqual(@as(?cell.Color, .default), buf.cells[row * 80].bg);
+    try testing.expectEqual(@as(?cell.Color, .default), buf.cells[row * 80 + 40].bg);
+    const first = rowOf(&buf, "add a thing", &line_buf);
+    try testing.expectEqual(@as(?cell.Color, null), buf.cells[first * 80].bg);
+}
+
+fn rowOf(buf: *cell.Buffer, needle: []const u8, line_buf: []u8) usize {
+    var y: u16 = 0;
+    while (y < buf.height) : (y += 1) {
+        if (std.mem.indexOf(u8, buf.rowText(y, line_buf), needle) != null) return y;
+    }
+    unreachable;
 }
 
 test "a tiny terminal degrades instead of crashing" {

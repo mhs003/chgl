@@ -188,19 +188,26 @@ pub const Terminal = struct {
             var fbs = std.Io.Writer.fixed(&row_buf);
             try fbs.writeAll("\x1b[2K");
             var current: cell.Color = .default;
+            var bar: ?cell.Color = null;
             var x: u16 = 0;
             const start = @as(usize, y) * @as(usize, buf.width);
             const line = buf.cells[start..][0..buf.width];
             while (x < buf.width) : (x += 1) {
                 const c = line[x];
                 if (!c.head) continue;
-                if (c.fg != current) {
-                    try fbs.writeAll(styleFor(c.fg));
+                // The bar is one block, so it is set once for the row rather
+                // than around each word: a colour change mid-row would cut it.
+                if (c.bg != bar) {
+                    bar = c.bg;
+                    if (bar) |b| try fbs.writeAll(backgroundFor(b)) else try fbs.writeAll(styleFor(c.fg));
                     current = c.fg;
+                } else if (bar == null and c.fg != current) {
+                    current = c.fg;
+                    try fbs.writeAll(styleFor(c.fg));
                 }
                 try fbs.print("{u}", .{c.ch});
             }
-            if (current != .default) try fbs.writeAll("\x1b[0m");
+            if (current != .default or bar != null) try fbs.writeAll("\x1b[0m");
             if (y + 1 < buf.height) try fbs.writeAll("\r\n");
             try err.writeAll(fbs.buffered());
         }
@@ -261,7 +268,16 @@ fn styleFor(color: cell.Color) []const u8 {
         .good => "\x1b[0;32m",
         .warn => "\x1b[0;33m",
         .bad => "\x1b[0;31m",
-        .selected => "\x1b[7m",
+    };
+}
+
+/// A background colour for the selected row. `Keep` gets green and `Skip`
+/// white; `Ask` has no bar colour of its own, so it keeps the plain white one
+/// the selector always had.
+fn backgroundFor(color: cell.Color) []const u8 {
+    return switch (color) {
+        .good => "\x1b[42;30m",
+        else => "\x1b[47;30m",
     };
 }
 
@@ -407,4 +423,11 @@ test "incomplete sequences ask for more bytes" {
     // An unknown final byte is Escape, not a hang.
     try std.testing.expectEqual(app.Key.escape, decodeEscape("[9~").?);
     try std.testing.expectEqual(app.Key.escape, decodeEscape("[Q").?);
+}
+
+test "the bar is a green background for Keep and a white one for Skip" {
+    try std.testing.expectEqualStrings("\x1b[42;30m", backgroundFor(.good));
+    try std.testing.expectEqualStrings("\x1b[47;30m", backgroundFor(.default));
+    // Ask has no bar colour of its own: it keeps the plain white one.
+    try std.testing.expectEqualStrings("\x1b[47;30m", backgroundFor(.warn));
 }
