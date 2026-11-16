@@ -377,6 +377,26 @@ if ! skip_group tui; then
     expect_contains "no terminal falls back instead of hanging" "$out" "## [0.8.0]" "$out"
 fi
 
+# ------------------------------------------------- non-conventional commits
+# A commit that is not a Conventional Commit is the user's to decide. The
+# editor must offer it as Ask; headless must skip it with a warning. Ask was
+# unreachable once, because the decision was made before the editor was known.
+if [ -z "${ONLY:-}" ] || [ "$ONLY" = "ask" ]; then
+    t "unconventional commits, in the editor and in a pipe"
+    d=$(seed_zap)
+    ( cd "$d" && git commit -q --allow-empty -m "just some words" )
+
+    out=$(run --repo "$d" --dump-frame)
+    expect_contains "the editor offers it as Ask" "$out" "1 ask" "$out"
+    expect_contains "and names the state on the row" "$out" "Ask " "$out"
+
+    out=$(run_code --repo "$d" --dry-run)
+    expect_contains "a pipe skips it, and says so" "$out" "were skipped" "$out"
+
+    out=$(run_code --repo "$d" --dry-run --include-unconventional)
+    expect_contains "--include-unconventional lists it" "$out" "just some words" "$out"
+fi
+
 # ------------------------------------------------------------------- config
 if ! skip_group config; then
     t "configuration"

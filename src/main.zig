@@ -342,6 +342,20 @@ fn generateWith(gpa: std.mem.Allocator, init: std.process.Init, opts_in: cli.Opt
     const today = try todayUtc(gpa, init);
     defer gpa.free(today);
 
+    // Decided before the plan: a commit that is not a Conventional Commit is
+    // the user's to decide, and only an editor can ask. Deciding it inside the
+    // build, from a flag nobody set, left `Ask` unreachable and showed those
+    // commits as skipped even on screen.
+    //
+    // Documented behaviour: with no flags at all, a person at a terminal gets
+    // the editor and a pipe gets plain text, without having to remember `-i`.
+    // `--write`/`--commit`/`--create-tag` were asked for explicitly, so they
+    // stay scriptable and never open a UI. `--dump-frame` is not an action: it
+    // inspects what the editor would show, so it must show that.
+    const scripted = opts.write or opts.commit or opts.create_tag or opts.dry_run;
+    const terminal_available = tui.isTty(init.io, .stdin()) and tui.isTty(init.io, .stdout());
+    const open_editor = opts.dump_frame or ((opts.tui or (terminal_available and !scripted)) and !opts.no_tui);
+
     var plan = plan_mod.build(gpa, .{
         .cfg = cfg,
         .runner = runner,
@@ -354,7 +368,7 @@ fn generateWith(gpa: std.mem.Allocator, init: std.process.Init, opts_in: cli.Opt
         .parse_merges = opts.parse_merges,
         .include_unconventional = opts.include_unconventional,
         .force = opts.force,
-        .interactive = false,
+        .editor = open_editor,
         .today = today,
         .read_file = fs.Fs.readCallback,
         .exists_file = fs.Fs.existsCallback,
@@ -416,14 +430,6 @@ fn generateWith(gpa: std.mem.Allocator, init: std.process.Init, opts_in: cli.Opt
         try tui.dumpFrame(&state, gpa, 90, 24, out);
         return 0;
     }
-
-    // Documented behaviour: with no flags at all, a person at a terminal gets
-    // the editor and a pipe gets plain text, without having to remember `-i`.
-    // `--write`/`--commit`/`--create-tag` were asked for explicitly, so they
-    // stay scriptable and never open a UI.
-    const scripted = opts.write or opts.commit or opts.create_tag or opts.dry_run;
-    const terminal_available = tui.isTty(init.io, .stdin()) and tui.isTty(init.io, .stdout());
-    const open_editor = (opts.tui or (terminal_available and !scripted)) and !opts.no_tui;
 
     if (open_editor) {
         var terminal = tui.Terminal.open(init.io) catch {

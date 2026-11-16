@@ -492,14 +492,22 @@ fn drawConfirm(state: *State, buf: *cell.Buffer) void {
     y += 2;
     var keep: usize = 0;
     var skip: usize = 0;
+    var ask: usize = 0;
     for (state.view.entries()) |e| switch (e.state) {
         .keep => keep += 1,
         .skip => skip += 1,
-        .ask => {},
+        .ask => ask += 1,
     };
     fbs = std.Io.Writer.fixed(&line_buf);
     fbs.print(" {d} entries, {d} skipped", .{ keep, skip }) catch {};
     _ = buf.put(2, y, fbs.buffered(), .dim);
+    if (ask != 0) {
+        // Nothing is written for these, so applying without a decision would
+        // drop them silently. Say so before the answer is asked for.
+        fbs = std.Io.Writer.fixed(&line_buf);
+        fbs.print(" {d} still Ask: they will be left out; go back and decide", .{ask}) catch {};
+        _ = buf.put(2, y + 1, fbs.buffered(), .warn);
+    }
 
     frameBottom(buf, "y apply   c commit   t tag   n back   (nothing is written until you answer)");
 }

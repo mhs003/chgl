@@ -182,9 +182,11 @@ pub const Entry = struct {
 
 pub const Options = struct {
     parse_merges: bool = false,
-    /// Headless mode turns "ask" into "skip" with a warning; the TUI keeps it
-    /// as "ask" so the user sees it.
-    interactive: bool = false,
+    /// How a commit that is not a Conventional Commit is listed when nobody
+    /// has decided yet. Headless mode turns it into a skip with a warning; the
+    /// editor keeps it as `Ask`. That is not decided here, because whether the
+    /// editor opens is only known after the plan exists — see `offerAsk`.
+    unconventional: State = .skip,
     exclude: []const []const u8 = &.{},
 };
 
@@ -246,6 +248,27 @@ pub const Release = struct {
         }
         return false;
     }
+
+    /// Hand every skipped non-conventional commit to the user as `Ask`.
+    ///
+    /// Called once the editor is known to be opening. It cannot happen in
+    /// `build`, because whether an editor opens is decided later, and
+    /// `build` deciding `skip` for good is what made `Ask` unreachable.
+    pub fn offerAsk(self: *Release) void {
+        for (self.entries.items) |*e| {
+            if (e.reason == .unconventional and e.state == .skip) e.state = .ask;
+        }
+    }
+
+    /// The same decision when nobody is there to make it: the warning names
+    /// them and says how to include them.
+    pub fn listingUnconventional(self: Release) usize {
+        var n: usize = 0;
+        for (self.entries.items) |e| {
+            if (e.reason == .unconventional) n += 1;
+        }
+        return n;
+    }
 };
 
 /// Build the release from a commit list. Owns nothing from `commits`; the
@@ -276,7 +299,7 @@ pub fn build(
             state = .skip;
         } else if (!parsed.parsed.isConventional()) {
             reason = .unconventional;
-            state = if (opts.interactive) .ask else .skip;
+            state = opts.unconventional;
         }
 
         try release.entries.append(allocator, .{
@@ -349,13 +372,24 @@ test "classifies conventional commits into groups" {
     try std.testing.expectEqual(SkipReason.unconventional, r.entries.items[4].reason);
 }
 
-test "interactive keeps unconventional as ask" {
+test "the editor lists unconventional commits as ask, headless skips them" {
     const a = std.testing.allocator;
     const commits = [_]log.Record{ rec("wip"), rec("updated the readme") };
-    var r = try build(a, &commits, .{ .interactive = true });
-    defer r.deinit(a);
-    try std.testing.expectEqual(@as(usize, 2), r.count(.ask));
-    try std.testing.expectEqual(@as(usize, 0), r.kept());
+
+    var asked = try build(a, &commits, .{ .unconventional = .ask });
+    defer asked.deinit(a);
+    try std.testing.expectEqual(@as(usize, 2), asked.count(.ask));
+    try std.testing.expectEqual(@as(usize, 0), asked.kept());
+
+    var skipped = try build(a, &commits, .{});
+    defer skipped.deinit(a);
+    try std.testing.expectEqual(@as(usize, 0), skipped.kept());
+    try std.testing.expectEqual(@as(usize, 2), skipped.listingUnconventional());
+
+    // Asked for explicitly: they ship, and there is nothing to warn about.
+    var kept = try build(a, &commits, .{ .unconventional = .keep });
+    defer kept.deinit(a);
+    try std.testing.expectEqual(@as(usize, 2), kept.kept());
 }
 
 test "merge commits are skipped unless asked for" {

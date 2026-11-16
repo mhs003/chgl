@@ -91,6 +91,11 @@ reference.
   one. No releasable commit in range → exit 3.
 - Non-conventional commits are never dropped silently: they default to the
   `Ask` state in the TUI and to `skip` with a warning in headless mode.
+  The mode is decided **before** the plan is built (`Request.editor`), because
+  whether an editor opens is known at the call site, not inside `release.build`.
+  Deciding it in the build, from a flag nobody set, made `Ask` unreachable
+  while its unit test still passed: a test that passes the flag directly
+  cannot see a caller that never does. Test this through `main`, not `build`.
 
 ## The changelog file (`[Unreleased]` policy)
 

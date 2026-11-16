@@ -200,7 +200,6 @@ pub const Request = struct {
     parse_merges: bool = false,
     include_unconventional: bool = false,
     force: bool = false,
-    interactive: bool = false,
     /// Today's date, YYYY-MM-DD; passed in so tests are deterministic.
     today: []const u8,
     /// Reads a file relative to the repo root, or null when absent.
@@ -208,6 +207,10 @@ pub const Request = struct {
     /// Cheap existence check; no allocation, used by detection.
     exists_file: *const fn (ctx: *anyopaque, path: []const u8) bool,
     ctx: *anyopaque,
+    /// Whether an editor will open, so a commit that is not a Conventional
+    /// Commit can be listed as `Ask` instead of skipped. The caller knows
+    /// this before the plan is built; the plan must not guess it.
+    editor: bool = false,
 };
 
 pub const Error = error{
@@ -340,7 +343,8 @@ pub fn build(allocator: std.mem.Allocator, req: Request) Error!Plan {
     // --- entries --------------------------------------------------------
     var release = try entry_mod.build(allocator, commits.commits, .{
         .parse_merges = req.parse_merges,
-        .interactive = req.interactive,
+        // Asked for explicitly, so they ship without a decision or a warning.
+        .unconventional = if (req.include_unconventional) .keep else if (req.editor) .ask else .skip,
         .exclude = req.cfg.changelog.exclude,
     });
     errdefer release.deinit(allocator);
@@ -348,15 +352,16 @@ pub fn build(allocator: std.mem.Allocator, req: Request) Error!Plan {
     if (range.whole_history and commits.commits.len >= req.cfg.changelog.max_commits) {
         try notes(&notices, allocator, "history capped at {d} commits (changelog.max_commits)", .{req.cfg.changelog.max_commits});
     }
-    const unconventional = release.count(.skip);
-    var unconventional_count: usize = 0;
-    for (release.entries.items) |e| {
-        if (e.reason == .unconventional) unconventional_count += 1;
+    const unconventional_count = release.listingUnconventional();
+    if (unconventional_count != 0) {
+        if (req.editor) {
+            // Not a warning: the editor opens on these entries as Ask, and
+            // saying they were skipped would be a lie about the screen.
+            try notes(&notices, allocator, "{d} commit(s) are not Conventional Commits; they need a decision in the editor", .{unconventional_count});
+        } else if (!req.include_unconventional) {
+            try notes(&notices, allocator, "{d} commit(s) are not Conventional Commits and were skipped; pass --include-unconventional to list them", .{unconventional_count});
+        }
     }
-    if (unconventional_count != 0 and !req.interactive) {
-        try notes(&notices, allocator, "{d} commit(s) are not Conventional Commits and were skipped; pass --include-unconventional to list them", .{unconventional_count});
-    }
-    _ = unconventional;
 
     // --- the file's own unreleased content ------------------------------
     const placement = changelog.edit.place(allocator, doc, req.cfg.changelog.unreleased == .absorb) catch |err| switch (err) {

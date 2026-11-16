@@ -248,7 +248,10 @@ words instead of `Added` and `Fixed`.
 
 Release commits (`chore(release): …`) are skipped. Merge commits are skipped
 unless `--parse-merges`. Commits that are not Conventional Commits are skipped
-with a notice; in the editor they appear as **Ask**, so the decision is yours.
+with a notice, or listed with `--include-unconventional`; in the editor they
+appear as **Ask**, so the decision is yours. Pressing `space` on an `Ask` entry
+keeps it, and one left undecided is left out — the apply screen says how many
+before you answer.
 
 ### What justifies a release
 
