@@ -617,9 +617,26 @@ fn configPath(gpa: std.mem.Allocator, opts: cli.Options, init: std.process.Init)
     if (init.environ_map.get("CHGL_CONFIG")) |p| {
         if (std.mem.trim(u8, p, " \t").len != 0) return try gpa.dupe(u8, p);
     }
+
+    // A repository can carry its own config. Without this, a project whose
+    // version or changelog lives somewhere unusual needs a flag on every run,
+    // and the machine-wide file is the only place to set it — which then
+    // applies to every other repository too.
+    const cwd = std.Io.Dir.cwd();
+    if (findRepo(init, opts)) |repo| {
+        defer gpa.free(repo);
+        for (config.REPO_FILE_NAMES) |name| {
+            const path = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ repo, name });
+            if (cwd.access(init.io, path, .{})) |_| {
+                return path;
+            } else |_| {
+                gpa.free(path);
+            }
+        }
+    } else |_| {}
+
     var env = config.EnvGetter{ .map = init.environ_map };
     const dir = config.configDirFrom(config.PLATFORM, env.getter()) orelse return null;
-    const cwd = std.Io.Dir.cwd();
     const candidates = [_][]const u8{ "config.toml", "config.json" };
     for (candidates) |name| {
         const path = try std.fmt.allocPrint(gpa, "{s}/{s}", .{ dir, name });

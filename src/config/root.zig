@@ -3,7 +3,8 @@
 //! Lookup order (first existing file wins):
 //!   1. `--config <PATH>`
 //!   2. `$CHGL_CONFIG`
-//!   3. the platform config dir, holding `config.toml` or `config.json`
+//!   3. `.chgl.toml` / `.chgl.json` in the repository root
+//!   4. the platform config dir, holding `config.toml` or `config.json`
 //!
 //! TOML is the primary format because it is what Zig, Rust and Python projects
 //! already write; JSON is accepted for people who prefer it. Both parse into
@@ -310,6 +311,11 @@ pub const PLATFORM = Platform{ .windows = @import("builtin").os.tag == .windows 
 pub const dir_buffer = struct {
     var buf: [std.fs.max_path_bytes]u8 = undefined;
 };
+
+/// Config files looked for in the repository root, in this order. Dotfiles,
+/// so they sit next to `.editorconfig` rather than competing with a project's
+/// own manifest.
+pub const REPO_FILE_NAMES = [_][]const u8{ ".chgl.toml", ".chgl.json" };
 
 /// A getter plus its context, so the same function serves the real
 /// environment and a fake one in tests.

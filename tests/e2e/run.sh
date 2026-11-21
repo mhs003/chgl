@@ -398,6 +398,46 @@ if [ -z "${ONLY:-}" ] || [ "$ONLY" = "ask" ]; then
 fi
 
 # ------------------------------------------------------------------- config
+if [ -z "${ONLY:-}" ] || [ "$ONLY" = "config" ]; then
+    t "a repository can carry its own config"
+    # Without this, a project whose version lives somewhere unusual needed a
+    # flag on every run, and the only place to set it was the machine-wide
+    # file — which then applied to every other repository too.
+    d="$tmp/repoconf"
+    mkdir -p "$d"
+    ( cd "$d" && git init -q -b main && git config user.email a@b && git config user.name A )
+    printf '# Changelog\n\n## [1.0.0]\n\n- x\n' > "$d/CHANGELOG.md"
+    printf '1.0.0\n' > "$d/VERSION"
+    # A frontend manifest that would win the auto-detection order.
+    printf '{"name":"ui","version":"9.4.0","private":true}\n' > "$d/package.json"
+    git -C "$d" add -A && git -C "$d" commit -qm "chore: init" && git -C "$d" tag v1.0.0
+    commit "$d" "feat(cli): keep me"
+
+    out=$("$bin" --repo "$d" --dry-run 2>&1 || true)
+    expect_contains "package.json wins auto-detection by default" "$out" "9.5.0" "$out"
+
+    printf '[version]\nsource = "file"\npath = "VERSION"\n' > "$d/.chgl.toml"
+    out=$("$bin" --repo "$d" --dry-run 2>&1 || true)
+    expect_contains "a repo config picks the version source" "$out" "1.1.0" "$out"
+
+    # Found from anywhere inside the repository, not just its root.
+    mkdir -p "$d/sub/dir"
+    out=$(cd "$d/sub/dir" && "$bin" --dry-run 2>&1 || true)
+    expect_contains "it is found from a subdirectory" "$out" "1.1.0" "$out"
+
+    # A machine-wide file must not override the repository's own.
+    conf3="$tmp/conf3/chgl"
+    mkdir -p "$conf3"
+    printf '[version]\nsource = "npm"\n' > "$conf3/config.toml"
+    out=$(cd "$d" && XDG_CONFIG_HOME="$tmp/conf3" "$bin" --dry-run 2>&1 || true)
+    expect_contains "the repo config beats the machine-wide one" "$out" "1.1.0" "$out"
+
+    # An explicit --config still wins over both.
+    printf '[version]\nsource = "npm"\n' > "$tmp/explicit.toml"
+    out=$(cd "$d" && "$bin" --config "$tmp/explicit.toml" --dry-run 2>&1 || true)
+    expect_contains "--config beats a repo config" "$out" "9.5.0" "$out"
+fi
+
 if ! skip_group config; then
     t "configuration"
     d=$(new_repo cfg)

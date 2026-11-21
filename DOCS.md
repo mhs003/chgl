@@ -341,9 +341,14 @@ tested without a terminal.
 TOML, or JSON with the same keys. Every key is optional; an unknown key is an
 error, so a typo like `max_commit` fails instead of being ignored.
 
-Lookup order: `--config`, `$CHGL_CONFIG`, then the platform directory —
-`%APPDATA%\chgl` on Windows, otherwise `$XDG_CONFIG_HOME/chgl` or
-`~/.config/chgl`, holding `config.toml` or `config.json`.
+Lookup order: `--config`, `$CHGL_CONFIG`, `.chgl.toml` (or `.chgl.json`) in
+the repository root, then the platform directory — `%APPDATA%\chgl` on Windows,
+otherwise `$XDG_CONFIG_HOME/chgl` or `~/.config/chgl`, holding `config.toml` or
+`config.json`.
+
+Use the repository file for anything that is true of one project only: which
+file holds the version, which changelog to write, a tag prefix. The platform
+file is for what is true of *you* — a theme, a provider key.
 
 ```toml
 [changelog]
